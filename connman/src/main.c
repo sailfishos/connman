@@ -98,6 +98,7 @@ static struct {
 	char *vendor_class_id;
 	GHashTable *fallback_device_types;
 	bool enable_login_manager;
+	bool filter_dns_records;
 } connman_settings  = {
 	.bg_scan = true,
 	.pref_timeservers = NULL,
@@ -118,6 +119,7 @@ static struct {
 	.vendor_class_id = NULL,
 	.fallback_device_types = NULL,
 	.enable_login_manager = false,
+	.filter_dns_records = true,
 };
 
 #define CONF_BG_SCAN                    "BackgroundScanning"
@@ -143,6 +145,7 @@ static struct {
 #define CONF_VENDOR_CLASS_ID            "VendorClassID"
 #define CONF_FALLBACK_DEVICE_TYPES      "FallbackDeviceTypes"
 #define CONF_ENABLE_LOGIN_MANAGER       "EnableLoginManager"
+#define CONF_FILTER_DNS_RECORDS         "FilterDNSRecords"
 
 static const char *supported_options[] = {
 	CONF_BG_SCAN,
@@ -171,6 +174,7 @@ static const char *supported_options[] = {
 	CONF_VENDOR_CLASS_ID,
 	CONF_FALLBACK_DEVICE_TYPES,
 	CONF_ENABLE_LOGIN_MANAGER,
+	CONF_FILTER_DNS_RECORDS,
 	NULL
 };
 
@@ -549,6 +553,14 @@ static void parse_config(GKeyFile *config)
 	g_strfreev(str_list);
 
 	g_clear_error(&error);
+
+	boolean = __connman_config_get_bool(config, "General",
+					CONF_FILTER_DNS_RECORDS,
+					&error);
+	if (!error)
+		connman_settings.filter_dns_records = boolean;
+
+	g_clear_error(&error);
 }
 
 static int config_init(const char *file)
@@ -781,6 +793,9 @@ bool connman_setting_get_bool(const char *key)
 
 	if (g_str_equal(key, CONF_ENABLE_LOGIN_MANAGER))
 		return connman_settings.enable_login_manager;
+
+	if (g_str_equal(key, CONF_FILTER_DNS_RECORDS))
+		return connman_settings.filter_dns_records;
 
 	return false;
 }
