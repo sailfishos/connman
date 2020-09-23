@@ -102,5 +102,5 @@ if __name__ == '__main__':
 				signal_name="PropertyChanged",
 				path_keyword="path")
 
-	mainloop = gobject.MainLoop()
+	mainloop = GLib.MainLoop()
 	mainloop.run()
