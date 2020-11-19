@@ -2371,6 +2371,8 @@ bool connman_service_set_autoconnect(struct connman_service *service,
 		connman_network_autoconnect_changed(service->network,
 							service->autoconnect);
 
+	connman_network_set_autoconnect(service->network, autoconnect);
+
 	return true;
 }
 
