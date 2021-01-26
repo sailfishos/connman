@@ -2999,6 +2999,9 @@ static bool toggle_dnsproxy_for_ipconfig(struct connman_service *service,
 	bool change = false;
 	int index;
 
+	if (!filter_dns_records)
+		return false;
+
 	type = __connman_ipconfig_get_config_type(ipconfig);
 	method = __connman_ipconfig_get_method(ipconfig);
 
