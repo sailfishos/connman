@@ -269,6 +269,7 @@ static unsigned int autoconnect_id = 0;
 static unsigned int vpn_autoconnect_id = 0;
 static struct connman_service *current_default = NULL;
 static bool services_dirty = false;
+static bool enable_online_to_ready_transition = false;
 static bool autoconnect_paused = false;
 static guint load_wifi_services_id = 0;
 static GHashTable **service_type_hash;
@@ -1995,6 +1996,8 @@ static void cancel_online_check(struct connman_service *service)
 static void start_online_check(struct connman_service *service,
 				enum connman_ipconfig_type type)
 {
+	enable_online_to_ready_transition =
+		connman_setting_get_bool("EnableOnlineToReadyTransition");
 	online_check_initial_interval =
 		connman_setting_get_uint("OnlineCheckInitialInterval");
 	online_check_max_interval =
@@ -8484,12 +8487,14 @@ static gboolean downgrade_state_ipv6(gpointer user_data)
 	return false;
 }
 
-int __connman_service_online_check_failed(struct connman_service *service,
-					enum connman_ipconfig_type type)
+void __connman_service_online_check_failed(struct connman_service *service,
+					enum connman_ipconfig_type type,
+					bool success)
 {
 	GSourceFunc downgrade_func;
 	GSourceFunc redo_func;
 	unsigned int *interval;
+	enum connman_service_state current_state;
 	guint timeout;
 
 	DBG("service %p type %s\n",
@@ -8505,6 +8510,22 @@ int __connman_service_online_check_failed(struct connman_service *service,
 		redo_func = redo_wispr_ipv6;
 	}
 
+	if(!enable_online_to_ready_transition)
+		goto redo_func;
+
+	if (success) {
+		*interval = online_check_max_interval;
+	} else {
+		current_state = service->state;
+		downgrade_state(service);
+		if (current_state != service->state)
+			*interval = online_check_initial_interval;
+		if (service != connman_service_get_default()) {
+			return;
+		}
+	}
+
+redo_func:
 	DBG("service %p type %s interval %d", service,
 		__connman_ipconfig_type2string(type), *interval);
 
@@ -8545,8 +8566,6 @@ int __connman_service_online_check_failed(struct connman_service *service,
 	 */
 	if (*interval < online_check_max_interval)
 		(*interval)++;
-
-	return -EAGAIN;
 }
 
 int __connman_service_ipconfig_indicate_state(struct connman_service *service,
