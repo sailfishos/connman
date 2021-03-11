@@ -7825,6 +7825,7 @@ static void report_error_cb(void *user_context, bool retry,
 		__connman_service_clear_error(service);
 
 		service_complete(service);
+		service_list_sort();
 		__connman_connection_update_gateway();
 	}
 }
@@ -8235,6 +8236,7 @@ static int service_indicate_state(struct connman_service *service)
 						report_error_cb,
 						get_dbus_sender(service),
 						NULL);
+			goto notifier;
 		}
 		service_complete(service);
 		break;
@@ -8244,6 +8246,7 @@ static int service_indicate_state(struct connman_service *service)
 
 	__connman_connection_update_gateway();
 
+notifier:
 	if ((old_state == CONNMAN_SERVICE_STATE_ONLINE &&
 			new_state != CONNMAN_SERVICE_STATE_READY) ||
 		(old_state == CONNMAN_SERVICE_STATE_READY &&
