@@ -10107,6 +10107,49 @@ static void update_from_network(struct connman_service *service,
 	service_list_sort();
 }
 
+static void trigger_autoconnect(struct connman_service *service)
+{
+	struct connman_device *device;
+
+	/*
+	 * We have dropped favorite as requirement to autoconnect in
+	 * f64f1633bd76c63b445cbb2580b8fcf2e65e09e4 - keep it as such.
+	 */
+	connman_network_set_autoconnect(service->network,
+				/*service->favorite && */service->autoconnect);
+	if (service->favorite || service->autoconnect) {
+		device = connman_network_get_device(service->network);
+		if (device && !connman_device_get_scanning(device,
+						CONNMAN_SERVICE_TYPE_UNKNOWN)) {
+
+			switch (service->type) {
+			case CONNMAN_SERVICE_TYPE_UNKNOWN:
+			case CONNMAN_SERVICE_TYPE_SYSTEM:
+			case CONNMAN_SERVICE_TYPE_P2P:
+				break;
+
+			case CONNMAN_SERVICE_TYPE_GADGET:
+			case CONNMAN_SERVICE_TYPE_ETHERNET:
+				if (service->autoconnect) {
+					__connman_service_connect(service,
+						CONNMAN_SERVICE_CONNECT_REASON_AUTO);
+					break;
+				}
+
+				/* fall through */
+			case CONNMAN_SERVICE_TYPE_BLUETOOTH:
+			case CONNMAN_SERVICE_TYPE_GPS:
+			case CONNMAN_SERVICE_TYPE_VPN:
+			case CONNMAN_SERVICE_TYPE_WIFI:
+			case CONNMAN_SERVICE_TYPE_CELLULAR:
+				do_auto_connect(service,
+					CONNMAN_SERVICE_CONNECT_REASON_AUTO);
+				break;
+			}
+		}
+	}
+}
+
 /**
  * __connman_service_create_from_network:
  * @network: network structure
@@ -10116,7 +10159,6 @@ static void update_from_network(struct connman_service *service,
 bool __connman_service_create_from_network(struct connman_network *network)
 {
 	struct connman_service *service;
-	struct connman_device *device;
 	const char *ident, *group;
 	char *name;
 	unsigned int *auto_connect_types, *favorite_types;
@@ -10212,45 +10254,7 @@ bool __connman_service_create_from_network(struct connman_network *network)
 	service_register(service);
 	service_schedule_added(service);
 
-	/*
-	 * We have dropped favorite as requirement to autoconnect in
-	 * f64f1633bd76c63b445cbb2580b8fcf2e65e09e4 - keep it as such. Leave
-	 * the upstream change here just in case as a reminder.
-	 */
-	connman_network_set_autoconnect(network,
-				/*service->favorite && */service->autoconnect);
-
-	if (service->favorite || service->autoconnect) {
-		device = connman_network_get_device(service->network);
-		if (device && !connman_device_get_scanning(device,
-						CONNMAN_SERVICE_TYPE_UNKNOWN)) {
-
-			switch (service->type) {
-			case CONNMAN_SERVICE_TYPE_UNKNOWN:
-			case CONNMAN_SERVICE_TYPE_SYSTEM:
-			case CONNMAN_SERVICE_TYPE_P2P:
-				break;
-
-			case CONNMAN_SERVICE_TYPE_GADGET:
-			case CONNMAN_SERVICE_TYPE_ETHERNET:
-				if (service->autoconnect) {
-					__connman_service_connect(service,
-						CONNMAN_SERVICE_CONNECT_REASON_AUTO);
-					break;
-				}
-
-				/* fall through */
-			case CONNMAN_SERVICE_TYPE_BLUETOOTH:
-			case CONNMAN_SERVICE_TYPE_GPS:
-			case CONNMAN_SERVICE_TYPE_VPN:
-			case CONNMAN_SERVICE_TYPE_WIFI:
-			case CONNMAN_SERVICE_TYPE_CELLULAR:
-				do_auto_connect(service,
-					CONNMAN_SERVICE_CONNECT_REASON_AUTO);
-				break;
-			}
-		}
-	}
+	trigger_autoconnect(service);
 
 	__connman_notifier_service_add(service, service->name);
 
