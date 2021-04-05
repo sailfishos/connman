@@ -555,6 +555,8 @@ static const char *reason2string(enum connman_service_connect_reason reason)
 		return "auto";
 	case CONNMAN_SERVICE_CONNECT_REASON_SESSION:
 		return "session";
+	case CONNMAN_SERVICE_CONNECT_REASON_NATIVE:
+		return "native";
 	}
 
 	return "unknown";
@@ -4771,6 +4773,13 @@ static void do_auto_connect(struct connman_service *service,
 		return;
 
 	/*
+	 * Do not use the builtin auto connect, instead rely on the
+	 * native auto connect feature of the service.
+	 */
+	if (service->connect_reason == CONNMAN_SERVICE_CONNECT_REASON_NATIVE)
+		return;
+
+	/*
 	 * Run service auto connect for other than VPN services. Afterwards
 	 * start also VPN auto connect process.
 	 */
@@ -5826,6 +5835,12 @@ static bool auto_connect_service(GList *services,
 
 		if (ignore[service->type] || busy[service->type])
 			continue;
+
+		if (service->connect_reason ==
+				CONNMAN_SERVICE_CONNECT_REASON_NATIVE) {
+			DBG("service %p uses native autonnect, skip", service);
+			continue;
+		}
 
 		if (service->pending ||
 				is_connecting(service->state) ||
@@ -9009,6 +9024,12 @@ int __connman_service_connect(struct connman_service *service,
 
 	__connman_service_clear_error(service);
 
+	if (__connman_network_native_autoconnect(service->network) &&
+			service->autoconnect) {
+		DBG("service %p switch connecting reason to native", service);
+		reason = CONNMAN_SERVICE_CONNECT_REASON_NATIVE;
+	}
+
 	err = service_connect(service);
 
 	DBG("service %p err %d", service, err);
@@ -10110,44 +10131,49 @@ static void update_from_network(struct connman_service *service,
 static void trigger_autoconnect(struct connman_service *service)
 {
 	struct connman_device *device;
+	bool native;
 
 	/*
 	 * We have dropped favorite as requirement to autoconnect in
 	 * f64f1633bd76c63b445cbb2580b8fcf2e65e09e4 - keep it as such.
 	 */
-	connman_network_set_autoconnect(service->network,
-				/*service->favorite && */service->autoconnect);
-	if (service->favorite || service->autoconnect) {
-		device = connman_network_get_device(service->network);
-		if (device && !connman_device_get_scanning(device,
-						CONNMAN_SERVICE_TYPE_UNKNOWN)) {
+	if (!service->favorite && !service->autoconnect)
+		return;
 
-			switch (service->type) {
-			case CONNMAN_SERVICE_TYPE_UNKNOWN:
-			case CONNMAN_SERVICE_TYPE_SYSTEM:
-			case CONNMAN_SERVICE_TYPE_P2P:
-				break;
-
-			case CONNMAN_SERVICE_TYPE_GADGET:
-			case CONNMAN_SERVICE_TYPE_ETHERNET:
-				if (service->autoconnect) {
-					__connman_service_connect(service,
-						CONNMAN_SERVICE_CONNECT_REASON_AUTO);
-					break;
-				}
-
-				/* fall through */
-			case CONNMAN_SERVICE_TYPE_BLUETOOTH:
-			case CONNMAN_SERVICE_TYPE_GPS:
-			case CONNMAN_SERVICE_TYPE_VPN:
-			case CONNMAN_SERVICE_TYPE_WIFI:
-			case CONNMAN_SERVICE_TYPE_CELLULAR:
-				do_auto_connect(service,
-					CONNMAN_SERVICE_CONNECT_REASON_AUTO);
-				break;
-			}
-		}
+	native = __connman_network_native_autoconnect(service->network);
+	if (native && service->autoconnect) {
+		DBG("trigger native autoconnect");
+		connman_network_set_autoconnect(service->network, true);
+		return;
 	}
+
+	device = connman_network_get_device(service->network);
+	if (device && connman_device_get_scanning(device, CONNMAN_SERVICE_TYPE_UNKNOWN))
+		return;
+
+	switch (service->type) {
+	case CONNMAN_SERVICE_TYPE_UNKNOWN:
+	case CONNMAN_SERVICE_TYPE_SYSTEM:
+	case CONNMAN_SERVICE_TYPE_P2P:
+		break;
+
+	case CONNMAN_SERVICE_TYPE_GADGET:
+	case CONNMAN_SERVICE_TYPE_ETHERNET:
+		if (service->autoconnect) {
+			__connman_service_connect(service,
+						CONNMAN_SERVICE_CONNECT_REASON_AUTO);
+			break;
+ 		}
+
+		/* fall through */
+	case CONNMAN_SERVICE_TYPE_BLUETOOTH:
+	case CONNMAN_SERVICE_TYPE_GPS:
+	case CONNMAN_SERVICE_TYPE_VPN:
+	case CONNMAN_SERVICE_TYPE_WIFI:
+	case CONNMAN_SERVICE_TYPE_CELLULAR:
+		do_auto_connect(service, CONNMAN_SERVICE_CONNECT_REASON_AUTO);
+		break;
+ 	}
 }
 
 /**
