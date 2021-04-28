@@ -883,7 +883,12 @@ static bool wispr_portal_web_result(GWebResult *result, gpointer user_data)
 		connman_agent_cancel(wp_context->service);
 		portal_manage_status(result, wp_context);
 		return false;
+	case 300:
+	case 301:
 	case 302:
+	case 303:
+	case 307:
+	case 308:
 		DBG("tls %d, Location header %d", (!g_web_supports_tls()),
 				(!g_web_result_get_header(result, "Location",
 						&redirect)));
