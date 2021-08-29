@@ -1903,8 +1903,6 @@ int __connman_network_connect(struct connman_network *network)
 	if (!network->device)
 		return -ENODEV;
 
-	__connman_device_disconnect(network->device);
-
 	network->connecting = true;
 	network->disconnecting = false;
 
