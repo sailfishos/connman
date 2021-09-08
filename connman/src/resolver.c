@@ -58,6 +58,7 @@ struct entry_data {
 
 static GSList *entry_list = NULL;
 static bool dnsproxy_enabled = false;
+static bool single_request_options = false;
 
 struct resolvfile_entry {
 	int index;
@@ -160,6 +161,11 @@ static int resolvfile_export(void)
 	}
 	g_list_free(export_list);
 
+	if (single_request_options) {
+		/* Set the clients to conduct sequential requests */
+		g_string_append_printf(content, "options single-request\n");
+	}
+
 	old_umask = umask(022);
 
 	fd = open(RESOLV_CONF_STATEDIR, O_RDWR | O_CREAT | O_CLOEXEC,
@@ -197,8 +203,8 @@ done:
 	return err;
 }
 
-int __connman_resolvfile_append(int index, const char *domain,
-							const char *server)
+int resolvfile_add(int index, const char *domain, const char *server,
+							bool append)
 {
 	struct resolvfile_entry *entry;
 
@@ -215,9 +221,22 @@ int __connman_resolvfile_append(int index, const char *domain,
 	entry->domain = g_strdup(domain);
 	entry->server = g_strdup(server);
 
-	resolvfile_list = g_list_append(resolvfile_list, entry);
+	resolvfile_list = append ? g_list_append(resolvfile_list, entry) :
+				g_list_prepend(resolvfile_list, entry);
 
 	return resolvfile_export();
+}
+
+int __connman_resolvfile_append(int index, const char *domain,
+							const char *server)
+{
+	return resolvfile_add(index, domain, server, true);
+}
+
+int __connman_resolvfile_prepend(int index, const char *domain,
+							const char *server)
+{
+	return resolvfile_add(index, domain, server, false);
 }
 
 int __connman_resolvfile_remove(int index, const char *domain,
@@ -274,6 +293,22 @@ void __connman_resolver_append_fallback_nameservers(void)
 					entry->domain, entry->server);
 		}
 	}
+}
+
+/* TODO: this will always trigger resolv.conf export, may not be necessary.. */
+void __connman_resolver_set_single_request_options(bool value)
+{
+	bool do_export = false;
+
+	DBG("dnsproxy.c set value %s", value ? "on" : "off");
+
+	if (single_request_options != value)
+		do_export = true;
+
+	single_request_options = value;
+
+	if (do_export)
+		resolvfile_export();
 }
 
 static void remove_fallback_nameservers(void)

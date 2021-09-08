@@ -29,6 +29,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <arpa/inet.h>
+#include <arpa/nameser.h>
 #include <netinet/in.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -221,6 +222,9 @@ static GHashTable *listener_table = NULL;
 static time_t next_refresh;
 static GHashTable *partial_tcp_req_table;
 static guint cache_timer = 0;
+static bool filter_dns_records;
+static bool ipv4_records_enabled = false;
+static bool ipv6_records_enabled = false;
 
 static guint16 get_id(void)
 {
@@ -314,6 +318,26 @@ static struct server_data *find_server(int index,
 static GResolv *ipv4_resolve;
 static GResolv *ipv6_resolve;
 
+static bool is_dns_enabled(uint16_t type, bool default_value)
+{
+	/* Filtering of DNS records disabled by config */
+	if (!filter_dns_records)
+		return true;
+
+	switch (type) {
+	/* IPv4 */
+	case ns_t_a:
+		return ipv4_records_enabled;
+	/* IPv6 */
+	case ns_t_aaaa:
+		return ipv6_records_enabled;
+	default:
+		DBG("not-supported type %d, return %s", type,
+					default_value ? "true" : "false");
+		return default_value;
+	}
+}
+
 static void dummy_resolve_func(GResolvResultStatus status,
 					char **results, gpointer user_data)
 {
@@ -325,26 +349,26 @@ static void refresh_dns_entry(struct cache_entry *entry, char *name)
 {
 	int age = 1;
 
-	if (!ipv4_resolve) {
+	if (!ipv4_resolve /*&& is_dns_enabled(ns_t_a, false)*/) {
 		ipv4_resolve = g_resolv_new(0);
 		g_resolv_set_address_family(ipv4_resolve, AF_INET);
 		g_resolv_add_nameserver(ipv4_resolve, "127.0.0.1", 53, 0);
 	}
 
-	if (!ipv6_resolve) {
+	if (!ipv6_resolve && is_dns_enabled(ns_t_aaaa, false)) {
 		ipv6_resolve = g_resolv_new(0);
 		g_resolv_set_address_family(ipv6_resolve, AF_INET6);
 		g_resolv_add_nameserver(ipv6_resolve, "::1", 53, 0);
 	}
 
-	if (!entry->ipv4) {
+	if (!entry->ipv4 /*&& is_dns_enabled(ns_t_a, false)*/) {
 		DBG("Refreshing A record for %s", name);
 		g_resolv_lookup_hostname(ipv4_resolve, name,
 					dummy_resolve_func, NULL);
 		age = 4;
 	}
 
-	if (!entry->ipv6) {
+	if (!entry->ipv6 && is_dns_enabled(ns_t_aaaa, false)) {
 		DBG("Refreshing AAAA record for %s", name);
 		g_resolv_lookup_hostname(ipv6_resolve, name,
 					dummy_resolve_func, NULL);
@@ -475,7 +499,7 @@ static void send_cached_response(int sk, unsigned char *buf, int len,
 
 static void send_response(int sk, unsigned char *buf, size_t len,
 				const struct sockaddr *to, socklen_t tolen,
-				int protocol)
+				int protocol, uint8_t ns_error)
 {
 	struct domain_hdr *hdr;
 	int err, offset = protocol_offset(protocol);
@@ -485,8 +509,10 @@ static void send_response(int sk, unsigned char *buf, size_t len,
 	if (offset < 0)
 		return;
 
-	if (len < sizeof(*hdr) + offset)
+	if (len < sizeof(*hdr) + offset) {
+		DBG("Ignore DNS response, len %d too small", len);
 		return;
+	}
 
 	hdr = (void *) (buf + offset);
 	if (offset) {
@@ -494,12 +520,28 @@ static void send_response(int sk, unsigned char *buf, size_t len,
 		buf[1] = sizeof(*hdr);
 	}
 
-	DBG("id 0x%04x qr %d opcode %d", hdr->id, hdr->qr, hdr->opcode);
-
 	hdr->qr = 1;
-	hdr->rcode = ns_r_servfail;
+	hdr->rcode = ns_error;
 
-	hdr->qdcount = 0;
+	DBG("id 0x%04x qr %d opcode %d rcode %d", hdr->id, hdr->qr,
+				hdr->opcode, hdr->rcode);
+
+	/* Negative return means we are authoritative */
+	/* TODO: send_cached_response() does almost the same, here the result
+	 * seems to be *-[|domain] or NXDomain*- [0q] 0/0/0 
+	 * Not sure if they're correct but seems to work?
+	 */
+	switch(ns_error) {
+	case ns_r_nxdomain:
+		/* fall through */
+	case ns_r_noerror:
+		hdr->aa = 1;
+		break;
+	case ns_r_servfail:
+		hdr->qdcount = 0;
+		break;
+	}
+
 	hdr->ancount = 0;
 	hdr->nscount = 0;
 	hdr->arcount = 0;
@@ -581,7 +623,8 @@ static gboolean request_timeout(gpointer user_data)
 
 		if (sk >= 0)
 			send_response(sk, req->request, req->request_len,
-				sa, req->sa_len, req->protocol);
+						sa, req->sa_len, req->protocol,
+						ns_r_servfail);
 	}
 
 	/*
@@ -709,7 +752,7 @@ static uint16_t cache_check_validity(char *question, uint16_t type,
 	cache_enforce_validity(entry);
 
 	switch (type) {
-	case 1:		/* IPv4 */
+	case ns_t_a:		/* IPv4 */
 		if (!cache_check_is_valid(entry->ipv4, current_time)) {
 			DBG("cache %s \"%s\" type A", entry->ipv4 ?
 					"timeout" : "entry missing", question);
@@ -719,24 +762,35 @@ static uint16_t cache_check_validity(char *question, uint16_t type,
 
 			/*
 			 * We do not remove cache entry if there is still
-			 * valid IPv6 entry found in the cache.
+			 * valid IPv6 entry found in the cache. Remove cache if
+			 * IPv6 is not enabled.
 			 */
-			if (!cache_check_is_valid(entry->ipv6, current_time) && !want_refresh) {
+			if (!is_dns_enabled(ns_t_aaaa, false) ||
+						(!cache_check_is_valid(
+							entry->ipv6,
+							current_time) &&
+						!want_refresh)) {
 				g_hash_table_remove(cache, question);
 				type = 0;
 			}
 		}
 		break;
 
-	case 28:	/* IPv6 */
-		if (!cache_check_is_valid(entry->ipv6, current_time)) {
+	case ns_t_aaaa:		/* IPv6 */
+		if (!is_dns_enabled(type, false)) {
+			DBG("removing cache type AAAA question %s,"
+					"IPv6 not enabled", question);
+			g_hash_table_remove(cache, question);
+			type = 0;
+		} else if (!cache_check_is_valid(entry->ipv6, current_time)) {
 			DBG("cache %s \"%s\" type AAAA", entry->ipv6 ?
 					"timeout" : "entry missing", question);
 
 			if (want_refresh)
 				entry->want_refresh = true;
 
-			if (!cache_check_is_valid(entry->ipv4, current_time) && !want_refresh) {
+			if (!cache_check_is_valid(entry->ipv4, current_time) &&
+						!want_refresh) {
 				g_hash_table_remove(cache, question);
 				type = 0;
 			}
@@ -815,8 +869,11 @@ static struct cache_entry *cache_check(gpointer request, int *qtype, int proto)
 	q = (void *) (question + offset);
 	type = ntohs(q->type);
 
+	/* Record the type before returning to allow caller to get the type */
+	*qtype = type;
+
 	/* We only cache either A (1) or AAAA (28) requests */
-	if (type != 1 && type != 28)
+	if (type != ns_t_a && type != ns_t_aaaa)
 		return NULL;
 
 	if (!cache) {
@@ -832,7 +889,6 @@ static struct cache_entry *cache_check(gpointer request, int *qtype, int proto)
 	if (type == 0)
 		return NULL;
 
-	*qtype = type;
 	return entry;
 }
 
@@ -1009,7 +1065,7 @@ static int parse_response(unsigned char *buf, int buflen,
 	qtype = ntohs(q->type);
 
 	/* We cache only A and AAAA records */
-	if (qtype != 1 && qtype != 28)
+	if (qtype != ns_t_a && qtype != ns_t_aaaa)
 		return -ENOMSG;
 
 	qclass = ntohs(q->class);
@@ -1090,7 +1146,8 @@ static int parse_response(unsigned char *buf, int buflen,
 		 * address of ipv6.l.google.com. For caching purposes this
 		 * should not cause any issues.
 		 */
-		if (*type == 5 && strncmp(question, name, qlen) == 0) {
+		if (*type == ns_t_cname &&
+					strncmp(question, name, qlen) == 0) {
 			/*
 			 * So now the alias answered the question. This is
 			 * not very useful from caching point of view as
@@ -1182,6 +1239,9 @@ static gboolean cache_check_entry(gpointer key, gpointer value,
 	struct cache_timeout *data = user_data;
 	struct cache_entry *entry = value;
 	int max_timeout;
+
+	if (entry->ipv6 && !is_dns_enabled(ns_t_aaaa, false))
+		return TRUE;
 
 	/* Scale the number of hits by half as part of cache aging */
 
@@ -1436,7 +1496,7 @@ static int cache_update(struct server_data *srv, unsigned char *msg,
 	 */
 	if ((err == -ENOMSG || err == -ENOBUFS) &&
 			reply_query_type(msg + offset,
-					msg_len - offset) == 28) {
+					msg_len - offset) == ns_t_aaaa) {
 		entry = g_hash_table_lookup(cache, question);
 		if (entry && entry->ipv4 && !entry->ipv6) {
 			int cache_offset = 0;
@@ -1474,6 +1534,11 @@ static int cache_update(struct server_data *srv, unsigned char *msg,
 	if (err < 0 || ttl == 0)
 		return 0;
 
+	if (type == ns_t_aaaa && !is_dns_enabled(type, false)) {
+		DBG("IPv6 not enabled, ignore ns_t_aaaa response");
+		return -EOPNOTSUPP;
+	}
+
 	qlen = strlen(question);
 
 	/*
@@ -1500,24 +1565,24 @@ static int cache_update(struct server_data *srv, unsigned char *msg,
 		entry->want_refresh = false;
 		entry->hits = 0;
 
-		if (type == 1)
+		if (type == ns_t_a)
 			entry->ipv4 = data;
-		else
+		else if (type == ns_t_aaaa)
 			entry->ipv6 = data;
 	} else {
-		if (type == 1 && entry->ipv4)
+		if (type == ns_t_a && entry->ipv4)
 			return 0;
 
-		if (type == 28 && entry->ipv6)
+		if (type == ns_t_aaaa && entry->ipv6)
 			return 0;
 
 		data = g_try_new(struct cache_data, 1);
 		if (!data)
 			return -ENOMEM;
 
-		if (type == 1)
+		if (type == ns_t_a)
 			entry->ipv4 = data;
-		else
+		else if (type == ns_t_aaaa)
 			entry->ipv6 = data;
 
 		/*
@@ -1614,14 +1679,26 @@ static int ns_resolv(struct server_data *server, struct request_data *req,
 	struct cache_entry *entry;
 
 	entry = cache_check(request, &type, req->protocol);
+
+	/*
+	* If the record type is not in cache, the type is not accepted by
+	* is_dns_enabled(). In such case continue to send a response.
+	*/
+	if (type == ns_t_aaaa && !is_dns_enabled(type, true)) {
+		DBG("IPv6 not enabled, ignoring ns_t_aaaa (%d) request", type);
+		return -EOPNOTSUPP;
+	}
+
 	if (entry) {
 		int ttl_left = 0;
-		struct cache_data *data;
+		struct cache_data *data = NULL;
 
-		DBG("cache hit %s type %s", lookup, type == 1 ? "A" : "AAAA");
-		if (type == 1)
+		DBG("cache hit %s type %s", lookup,
+					type == ns_t_a ? "A" : "AAAA");
+
+		if (type == ns_t_a)
 			data = entry->ipv4;
-		else
+		else if (type == ns_t_aaaa)
 			data = entry->ipv6;
 
 		if (data) {
@@ -1969,6 +2046,30 @@ static int forward_dns_reply(unsigned char *reply, int reply_len, int protocol,
 
 	if (hdr->rcode == ns_r_noerror || !req->resp) {
 		unsigned char *new_reply = NULL;
+		uint16_t domain_len = 0;
+		uint16_t header_len;
+		uint16_t dns_type;
+		uint8_t host_len;
+		uint8_t dns_type_pos;
+		char *ptr;
+
+		header_len = offset + sizeof(struct domain_hdr);
+		ptr = (char *)reply + header_len;
+
+		host_len = *ptr;
+			if (host_len > 0)
+				domain_len = strnlen(ptr + 1 + host_len,
+						reply_len - header_len);
+
+		dns_type_pos = host_len + 1 + domain_len + 1;
+
+		dns_type = ptr[dns_type_pos] << 8 | ptr[dns_type_pos + 1];
+
+		/* Continue if type is other than A or AAAA */
+		if (!is_dns_enabled(dns_type, true)) {
+			DBG("Ignore msg dns type %d not enabled", dns_type);
+			goto out;
+		}
 
 		/*
 		 * If the domain name was append
@@ -1983,34 +2084,34 @@ static int forward_dns_reply(unsigned char *reply, int reply_len, int protocol,
 		 * a domain name part.
 		 */
 		if (req->append_domain && ntohs(hdr->qdcount) == 1) {
-			uint16_t domain_len = 0;
-			uint16_t header_len;
-			uint16_t dns_type, dns_class;
-			uint8_t host_len, dns_type_pos;
+			/*uint16_t domain_len = 0;
+			uint16_t header_len;*/
+			uint16_t /*dns_type,*/ dns_class;
+			/*uint8_t host_len, dns_type_pos;*/
 			char uncompressed[NS_MAXDNAME], *uptr;
-			char *ptr, *eom = (char *)reply + reply_len;
+			char /**ptr,*/ *eom = (char *)reply + reply_len;
 
 			/*
 			 * ptr points to the first char of the hostname.
 			 * ->hostname.domain.net
 			 */
-			header_len = offset + sizeof(struct domain_hdr);
-			ptr = (char *)reply + header_len;
+			/*header_len = offset + sizeof(struct domain_hdr);
+			ptr = (char *)reply + header_len;*/
 
-			host_len = *ptr;
+			/*host_len = *ptr;
 			if (host_len > 0)
 				domain_len = strnlen(ptr + 1 + host_len,
-						reply_len - header_len);
+						reply_len - header_len);*/
 
 			/*
 			 * If the query type is anything other than A or AAAA,
 			 * then bail out and pass the message as is.
 			 * We only want to deal with IPv4 or IPv6 addresses.
 			 */
-			dns_type_pos = host_len + 1 + domain_len + 1;
+			/*dns_type_pos = host_len + 1 + domain_len + 1;
 
 			dns_type = ptr[dns_type_pos] << 8 |
-							ptr[dns_type_pos + 1];
+							ptr[dns_type_pos + 1];*/
 			dns_class = ptr[dns_type_pos + 2] << 8 |
 							ptr[dns_type_pos + 3];
 			if (dns_type != ns_t_a && dns_type != ns_t_aaaa &&
@@ -2303,7 +2404,8 @@ hangup:
 			hdr = (void *) (req->request + 2);
 			hdr->id = req->srcid;
 			send_response(req->client_sk, req->request,
-				req->request_len, NULL, 0, IPPROTO_TCP);
+				req->request_len, NULL, 0, IPPROTO_TCP,
+				ns_r_servfail);
 
 			request_list = g_slist_remove(request_list, req);
 		}
@@ -2355,7 +2457,7 @@ hangup:
 
 			status = ns_resolv(server, req,
 						req->request, req->name);
-			if (status > 0) {
+			if (status > 0 || status == -EOPNOTSUPP) {
 				/*
 				 * A cached result was sent,
 				 * so the request can be released
@@ -2661,13 +2763,13 @@ static struct server_data *create_server(int index,
 	return data;
 }
 
-static bool resolv(struct request_data *req,
-				gpointer request, gpointer name)
+static bool resolv(struct request_data *req, gpointer request, gpointer name)
 {
 	GSList *list;
 
 	for (list = server_list; list; list = list->next) {
 		struct server_data *data = list->data;
+		int err;
 
 		if (data->protocol == IPPROTO_TCP) {
 			DBG("server %s ignored proto TCP", data->server);
@@ -2686,8 +2788,14 @@ static bool resolv(struct request_data *req,
 			}
 		}
 
-		if (ns_resolv(data, req, request, name) > 0)
+		err = ns_resolv(data, req, request, name);
+		if (err > 0) {
 			return true;
+		} else if (err == -EOPNOTSUPP) {
+			request_list = g_slist_remove(request_list, req);
+			//destroy_request_data(req);
+			return true;
+		}
 	}
 
 	return false;
@@ -2752,16 +2860,17 @@ static void flush_requests(struct server_data *server)
 	list = request_list;
 	while (list) {
 		struct request_data *req = list->data;
+		int err;
 
 		list = list->next;
 
-		if (ns_resolv(server, req, req->request, req->name)) {
+		err = ns_resolv(server, req, req->request, req->name);
+		if (err > 0 || err == -EOPNOTSUPP) {
 			/*
-			 * A cached result was sent,
-			 * so the request can be released
+			 * A cached result was sent, or the IP family is not
+			 * supported, the request can be released.
 			 */
-			request_list =
-				g_slist_remove(request_list, req);
+			request_list = g_slist_remove(request_list, req);
 			destroy_request_data(req);
 			continue;
 		}
@@ -2880,6 +2989,94 @@ static void dnsproxy_offline_mode(bool enabled)
 	}
 }
 
+static bool toggle_dnsproxy_for_ipconfig(struct connman_service *service,
+					struct connman_ipconfig *ipconfig)
+{
+	enum connman_ipconfig_type type;
+	enum connman_ipconfig_method method;
+	bool is_connected;
+	bool old_value;
+	bool change = false;
+	int index;
+
+	if (!filter_dns_records)
+		return false;
+
+	type = __connman_ipconfig_get_config_type(ipconfig);
+	method = __connman_ipconfig_get_method(ipconfig);
+
+	is_connected = __connman_service_is_connected_state(service, type);
+
+	switch (type) {
+	case CONNMAN_IPCONFIG_TYPE_IPV4:
+		old_value = ipv4_records_enabled;
+
+		if (method == CONNMAN_IPCONFIG_METHOD_OFF) {
+			DBG("IPv4 method off");
+			ipv4_records_enabled = false;
+		} else {
+			ipv4_records_enabled = is_connected;
+		}
+
+		DBG("service %p/%s IPv4 %s", service,
+				connman_service_get_identifier(service),
+				ipv4_records_enabled ? "enabled" : "disabled");
+
+		change = old_value != ipv4_records_enabled;
+		break;
+	case CONNMAN_IPCONFIG_TYPE_IPV6:
+		old_value = ipv6_records_enabled;
+
+		if (method == CONNMAN_IPCONFIG_METHOD_OFF) {
+			DBG("IPv6 method off");
+			ipv6_records_enabled = false;
+		} else {
+			ipv6_records_enabled = is_connected;
+		}
+
+		DBG("service %p/%s IPv6 %s", service,
+				connman_service_get_identifier(service),
+				ipv6_records_enabled ? "enabled" : "disabled");
+
+		change = old_value != ipv6_records_enabled;
+		break;
+	default:
+		DBG("unknown ipconfig type %d", type);
+		break;
+	}
+
+	/* No change */
+	if (!change)
+		return false;
+
+	index = connman_inet_ifindex("lo");
+	if (index < 0)
+		return false;
+
+	/* Either is set to be off enable single request in resolver. */
+	if (ipv6_records_enabled != ipv4_records_enabled) {
+		if (g_hash_table_lookup(listener_table,
+						GINT_TO_POINTER(index)))
+			__connman_resolver_set_single_request_options(true);
+	} else {
+		if (g_hash_table_lookup(listener_table,
+						GINT_TO_POINTER(index)))
+			__connman_resolver_set_single_request_options(false);
+	}
+
+	if (!ipv4_records_enabled)
+		__connman_resolvfile_remove(index, NULL, "127.0.0.1");
+	else
+		__connman_resolvfile_append(index, NULL, "127.0.0.1");
+	
+	if (!ipv6_records_enabled)
+		__connman_resolvfile_remove(index, NULL, "::1");
+	else
+		__connman_resolvfile_prepend(index, NULL, "::1");
+
+	return true;
+}
+
 static void dnsproxy_default_changed(struct connman_service *service)
 {
 	bool server_enabled = false;
@@ -2908,6 +3105,11 @@ static void dnsproxy_default_changed(struct connman_service *service)
 	 * default service.
 	 */
 	vpn_index = __connman_connection_get_vpn_index(index);
+
+	toggle_dnsproxy_for_ipconfig(service,
+				__connman_service_get_ip4config(service));
+	toggle_dnsproxy_for_ipconfig(service,
+				__connman_service_get_ip6config(service));
 
 	for (list = server_list; list; list = list->next) {
 		struct server_data *data = list->data;
@@ -2966,11 +3168,33 @@ static void dnsproxy_service_state_changed(struct connman_service *service,
 	}
 }
 
+static void dnsproxy_ipconfig_changed(struct connman_service *service,
+			struct connman_ipconfig *ipconfig)
+{
+	DBG("service %p ipconfig %p", service, ipconfig);
+
+	if (!service || !ipconfig)
+		return;
+
+	if (service != connman_service_get_default()) {
+		DBG("service %p/%s is not default", service,
+				connman_service_get_identifier(service));
+		return;
+	}
+
+	/* If there was a change invalidate and refresh cache */
+	if (toggle_dnsproxy_for_ipconfig(service, ipconfig)) {
+		cache_invalidate();
+		cache_refresh();
+	}
+}
+
 static struct connman_notifier dnsproxy_notifier = {
 	.name			= "dnsproxy",
 	.default_changed	= dnsproxy_default_changed,
 	.offline_mode		= dnsproxy_offline_mode,
 	.service_state_changed	= dnsproxy_service_state_changed,
+	.ipconfig_changed	= dnsproxy_ipconfig_changed,
 };
 
 static unsigned char opt_edns0_type[2] = { 0x00, 0x29 };
@@ -3012,6 +3236,7 @@ static int parse_request(unsigned char *buf, size_t len,
 
 		if (label_len == 0x00) {
 			uint8_t class;
+			uint16_t qtype;
 			struct qtype_qclass *q =
 				(struct qtype_qclass *)(ptr + 1);
 
@@ -3024,6 +3249,14 @@ static int parse_request(unsigned char *buf, size_t len,
 			if (class != 1 && class != 255) {
 				DBG("Dropped non-IN DNS class %d", class);
 				return -EINVAL;
+			}
+
+			qtype = ntohs(q->qtype);
+			if (qtype == ns_t_aaaa &&
+					!is_dns_enabled(qtype, false)) {
+				DBG("Dropped not supported %d type request",
+							qtype);
+				return -EOPNOTSUPP;
 			}
 
 			ptr += sizeof(*q) + 1;
@@ -3145,8 +3378,10 @@ read_another:
 	err = parse_request(client->buf + 2, msg_len,
 			query, sizeof(query));
 	if (err < 0 || (g_slist_length(server_list) == 0)) {
+		uint8_t ns_error = (err == -EOPNOTSUPP ?
+					ns_r_noerror : ns_r_servfail);
 		send_response(client_sk, client->buf, msg_len + 2,
-			NULL, 0, IPPROTO_TCP);
+			NULL, 0, IPPROTO_TCP, ns_error);
 		return true;
 	}
 
@@ -3177,14 +3412,26 @@ read_another:
 	 * creating sockets to the server.
 	 */
 	entry = cache_check(client->buf, &qtype, IPPROTO_TCP);
+
+	/*
+	 * If the record type is not in cache, the type is not accepted by
+	 * is_dns_enabled(). In such case continue to send a response.
+	 */
+	if (qtype == ns_t_aaaa && !is_dns_enabled(qtype, true)) {
+		DBG("IPv6 DNS not enabled, ignoring request");
+		g_free(req);
+		return true;
+	}
+
 	if (entry) {
 		int ttl_left = 0;
-		struct cache_data *data;
+		struct cache_data *data = NULL;
 
-		DBG("cache hit %s type %s", query, qtype == 1 ? "A" : "AAAA");
-		if (qtype == 1)
+		DBG("cache hit %s type %s", query,
+					qtype == ns_t_a ? "A" : "AAAA");
+		if (qtype == ns_t_a)
 			data = entry->ipv4;
-		else
+		else if (qtype == ns_t_aaaa)
 			data = entry->ipv6;
 
 		if (data) {
@@ -3217,7 +3464,7 @@ read_another:
 	if (!waiting_for_connect) {
 		/* No server is waiting for connect */
 		send_response(client_sk, client->buf,
-			req->request_len, NULL, 0, IPPROTO_TCP);
+			req->request_len, NULL, 0, IPPROTO_TCP, ns_r_servfail);
 		g_free(req);
 		return true;
 	}
@@ -3231,7 +3478,7 @@ read_another:
 	req->request = g_try_malloc0(req->request_len);
 	if (!req->request) {
 		send_response(client_sk, client->buf,
-			req->request_len, NULL, 0, IPPROTO_TCP);
+			req->request_len, NULL, 0, IPPROTO_TCP, ns_r_servfail);
 		g_free(req);
 		goto out;
 	}
@@ -3240,7 +3487,7 @@ read_another:
 	req->name = g_try_malloc0(sizeof(query));
 	if (!req->name) {
 		send_response(client_sk, client->buf,
-			req->request_len, NULL, 0, IPPROTO_TCP);
+			req->request_len, NULL, 0, IPPROTO_TCP, ns_r_servfail);
 		g_free(req->request);
 		g_free(req);
 		goto out;
@@ -3567,8 +3814,16 @@ static bool udp_listener_event(GIOChannel *channel, GIOCondition condition,
 
 	err = parse_request(buf, len, query, sizeof(query));
 	if (err < 0 || (g_slist_length(server_list) == 0)) {
-		send_response(sk, buf, len, client_addr,
-				*client_addr_len, IPPROTO_UDP);
+		uint8_t ns_error = (err == -EOPNOTSUPP ?
+					ns_r_noerror : ns_r_servfail);
+		/*if (err == -EOPNOTSUPP)
+			send_cached_response(sk, buf, len, client_addr,
+				*client_addr_len, IPPROTO_UDP,
+				buf[0] | (buf[1] << 8), 0, 0);
+		else */
+			send_response(sk, buf, len, client_addr,
+					*client_addr_len, IPPROTO_UDP,
+					ns_error);
 		return true;
 	}
 
@@ -3988,6 +4243,8 @@ int __connman_dnsproxy_init(void)
 	err = connman_notifier_register(&dnsproxy_notifier);
 	if (err < 0)
 		goto destroy;
+
+	filter_dns_records = connman_setting_get_bool("FilterDNSRecords");
 
 	return 0;
 

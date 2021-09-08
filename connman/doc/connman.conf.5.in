@@ -136,6 +136,15 @@ If /sys/class/net/<interface>/uevent does not contain DEVTYPE information,
 heuristics are used to choose between wifi and ethernet device types. If
 neither is appropriate, this setting can be used to provide more suitable
 fallback value - e.g. rndis0:gadget.
+.TP
+.BI FilterDNSRecords= true\ \fR|\fB\ false
+Filter out DNS records that have no connected network on the default
+service. This setting has effect only on A and AAAA DNS records. If the
+default online service has only IPv4 enabled and there is an another
+service online supporting also IPv6 then AAAA requests and replies are
+filtered out to prevent DNS leak. This is useful when using IPv4 only VPN
+in networks supporting IPv6 as well. By default this setting is enabled
+to provide more security.
 .SH "EXAMPLE"
 The following example configuration disables hostname updates and enables
 ethernet tethering.
