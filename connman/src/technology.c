@@ -1947,32 +1947,52 @@ bool __connman_technology_enable_from_config()
 
 	keyfile = __connman_storage_load_global();
 	if (!keyfile) {
-		connman_warn("No global settings found, all techs are off.");
-		return false;
-	}
+		connman_info("No global settings found, creating a new one.");
 
-	offlinemode = g_key_file_get_boolean(keyfile, "global",
-				"OfflineMode", &error);
-	if (error) {
-		offlinemode = false;
-		g_clear_error(&error);
-	}
+		/*
+		* New user by default should not have offline mode set so disable
+		* it if we have one set and save new settings file.
+		*/
+		if (global_offlinemode) {
+			DBG("disabling offline mode for a new user");
+			global_offlinemode = false;
+			__connman_technology_set_offlinemode(false);
+		}
+		global_offlinemode_override = 0;
 
-	DBG("offlinemode %s", offlinemode ? "true" : "false");
+		if (connman_technology_save_offlinemode() != 0) {
+			connman_error("Failed to create new settings file.");
+			return false;
+		}
+		keyfile = __connman_storage_load_global();
+	} else {
+		offlinemode = g_key_file_get_boolean(keyfile, "global",
+					"OfflineMode", &error);
+		if (error) {
+			offlinemode = false;
+			g_clear_error(&error);
+		}
 
-	/*
-	 * If new mode is online but in offline mode, set new mode to
-	 * avoid setting offline override without actual need when a
-	 * technology is enabled.
-	 */
-	if (!offlinemode && global_offlinemode) {
-		DBG("in offline mode, set to online");
-		__connman_technology_set_offlinemode(offlinemode);
+		DBG("offlinemode %s", offlinemode ? "true" : "false");
+
+		/*
+		 * If new mode is online but in offline mode, set new mode to
+		 * avoid setting offline override without actual need when a
+		 * technology is enabled.
+		 */
+		if (!offlinemode && global_offlinemode) {
+			DBG("in offline mode, set to online");
+			__connman_technology_set_offlinemode(offlinemode);
+		}
 	}
 
 	for (list = technology_list; list; list = list->next) {
 		struct connman_technology *technology = list->data;
 
+		/*
+		 * This one actually creates technology sections in settings file
+		 * when missing. Do not skip it even for a default settings file.
+		 */
 		if (technology_load_values(technology, keyfile)) {
 			DBG("Cannot load technology %p/%s keyfile %p",
 						technology,

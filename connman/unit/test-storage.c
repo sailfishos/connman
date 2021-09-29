@@ -5290,7 +5290,7 @@ static void storage_test_technology_callbacks1()
 
 	/* technology init will create empty settings file */
 	g_assert_true(__connman_technology_disable_all());
-	g_assert_false(__connman_technology_enable_from_config());
+	g_assert_true(__connman_technology_enable_from_config());
 
 	/* Create settings file */
 	settings_file = g_build_filename(STORAGEDIR, "settings", NULL);
