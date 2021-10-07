@@ -526,9 +526,10 @@ enum connman_service_type __connman_technology_get_type(
 	return tech->type;
 }
 
-static void connman_technology_save_offlinemode(void)
+static int connman_technology_save_offlinemode(void)
 {
 	GKeyFile *keyfile;
+	int ret;
 
 	keyfile = __connman_storage_load_global();
 	if (!keyfile)
@@ -537,11 +538,11 @@ static void connman_technology_save_offlinemode(void)
 	g_key_file_set_boolean(keyfile, "global",
 					"OfflineMode", global_offlinemode);
 
-	__connman_storage_save_global(keyfile);
+	ret = __connman_storage_save_global(keyfile);
 
 	g_key_file_unref(keyfile);
 
-	return;
+	return ret;
 }
 
 bool connman_technology_load_offlinemode(void)
