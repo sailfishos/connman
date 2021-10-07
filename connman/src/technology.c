@@ -460,8 +460,11 @@ static int technology_load_values(struct connman_technology *technology,
 	technology->tethering_passphrase = g_key_file_get_string(keyfile,
 				identifier, "Tethering.Passphrase", NULL);
 
-	if (need_saving)
+	if (need_saving) {
+		DBG("technology %p/%s needs saving", technology,
+					get_name(technology->type));
 		technology_save(technology);
+	}
 
 	return 0;
 }
