@@ -1641,7 +1641,7 @@ static int change_storage_dir(const char *root,
 		 * set. */
 		if (user_vpn_storage_dir &&
 				!g_strcmp0(user_vpn_storage_dir, vpn_path))
-			DBG("system vpn is already at %s", path);
+			DBG("system vpn is already at %s", vpn_path);
 
 		/*
 		 * Changing to other user or going back to root both are set.
@@ -1838,13 +1838,6 @@ static int change_storage_dir(const char *root,
 		cbs->load();
 	}
 
-	if (cbs && cbs->post) {
-		DBG("Run post setup");
-
-		if (!cbs->post())
-			DBG("post setup failed");
-	}
-
 out:
 	/*
 	 * Restore the default behavior in storage to allow removal of the
@@ -1950,7 +1943,7 @@ static int set_user_dir(const char *root, enum connman_storage_dir_type type,
 
 	/* Skip user storage dir creations if changing back to root */
 	if (!root || !*root)
-		return 0;
+		goto out;
 
 	switch (type) {
 	case STORAGE_DIR_TYPE_MAIN:
@@ -1967,7 +1960,7 @@ static int set_user_dir(const char *root, enum connman_storage_dir_type type,
 	if (err) {
 		DBG("cannot create connman user storage dir in %s error %s",
 					root, strerror(-err));
-		goto err;
+		goto out;
 	}
 
 	/* connmand needs also VPN dir to be set */
@@ -1978,14 +1971,19 @@ static int set_user_dir(const char *root, enum connman_storage_dir_type type,
 			DBG("cannot create connman user VPN storage dir in %s "
 						" error %s", root,
 						strerror(-err));
-			goto err;
 		}
 	}
 
-	return 0;
+out:
+	if (err)
+		change_storage_dir(NULL, type, prepare_only);
 
-err:
-	change_storage_dir(NULL, type, prepare_only);
+	if (cbs && cbs->post) {
+		DBG("Run post setup");
+
+		if (!cbs->post())
+			DBG("post setup failed");
+	}
 
 	return err;
 }
