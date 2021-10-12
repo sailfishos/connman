@@ -1244,7 +1244,7 @@ const char *g_supplicant_network_get_path(GSupplicantNetwork *network)
 const char *g_supplicant_network_get_mode(GSupplicantNetwork *network)
 {
 	if (!network)
-		return G_SUPPLICANT_MODE_UNKNOWN;
+		return NULL;
 
 	return mode2string(network->mode);
 }
@@ -1252,7 +1252,7 @@ const char *g_supplicant_network_get_mode(GSupplicantNetwork *network)
 const char *g_supplicant_network_get_security(GSupplicantNetwork *network)
 {
 	if (!network)
-		return G_SUPPLICANT_MODE_UNKNOWN;
+		return NULL;
 
 	return security2string(network->security);
 }
