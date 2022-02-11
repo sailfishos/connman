@@ -810,6 +810,33 @@ static void remove_peer(gpointer data)
 	g_free(peer);
 }
 
+static void remove_ssid(gpointer data)
+{
+	GSupplicantSSID *ssid = data;
+
+	if (!ssid)
+		return;
+
+	g_free((void *) ssid->ssid);
+	g_free((char *) ssid->eap);
+	g_free((char *) ssid->passphrase);
+	g_free((char *) ssid->identity);
+	g_free((char *) ssid->anonymous_identity);
+	g_free((char *) ssid->ca_cert_path);
+	g_free((char *) ssid->subject_match);
+	g_free((char *) ssid->altsubject_match);
+	g_free((char *) ssid->domain_suffix_match);
+	g_free((char *) ssid->domain_match);
+	g_free((char *) ssid->client_cert_path);
+	g_free((char *) ssid->private_key_path);
+	g_free((char *) ssid->private_key_passphrase);
+	g_free((char *) ssid->phase2_auth);
+	g_free((char *) ssid->pin_wps);
+	g_free((char *) ssid->bgscan);
+
+	g_free(ssid);
+}
+
 static void debug_strvalmap(const char *label, struct strvalmap *map,
 							unsigned int val)
 {
@@ -4151,6 +4178,7 @@ done:
 	if (data->callback)
 		data->callback(err, NULL, data->user_data);
 
+	remove_ssid(data->ssid);
 	dbus_free(data);
 }
 
@@ -4469,7 +4497,7 @@ static void interface_select_network_result(const char *error,
 	if (data->callback)
 		data->callback(err, data->interface, data->user_data);
 
-	g_free(data->ssid);
+	remove_ssid(data->ssid);
 	dbus_free(data);
 }
 
@@ -4525,7 +4553,7 @@ error:
 	}
 
 	g_free(data->path);
-	g_free(data->ssid);
+	remove_ssid(data->ssid);
 	g_free(data);
 }
 
@@ -5010,7 +5038,7 @@ static void interface_wps_start_result(const char *error,
 		data->callback(err, data->interface, data->user_data);
 
 	g_free(data->path);
-	g_free(data->ssid);
+	remove_ssid(data->ssid);
 	dbus_free(data);
 }
 
@@ -5050,7 +5078,7 @@ static void wps_start(const char *error, DBusMessageIter *iter, void *user_data)
 	if (error) {
 		SUPPLICANT_DBG("error: %s", error);
 		g_free(data->path);
-		g_free(data->ssid);
+		remove_ssid(data->ssid);
 		dbus_free(data);
 		return;
 	}
@@ -5139,6 +5167,7 @@ int g_supplicant_interface_connect(GSupplicantInterface *interface,
 			 * type is 802.11x).
 			 */
 			if (compare_network_parameters(interface, ssid)) {
+				remove_ssid(ssid);
 				return -EALREADY;
 			}
 
@@ -5164,6 +5193,7 @@ int g_supplicant_interface_connect(GSupplicantInterface *interface,
 
 	if (ret < 0) {
 		g_free(data->path);
+		remove_ssid(data->ssid);
 		dbus_free(data);
 		return ret;
 	}
@@ -5214,6 +5244,7 @@ static void network_remove_result(const char *error,
 	} else {
 		if (data->callback)
 			data->callback(result, data->interface, data->user_data);
+		remove_ssid(data->ssid);
 	}
 	g_free(data->path);
 	dbus_free(data);
@@ -5267,6 +5298,7 @@ static void interface_disconnect_result(const char *error,
 							data->user_data);
 
 		g_free(data->path);
+		remove_ssid(data->ssid);
 		dbus_free(data);
 		return;
 	}
@@ -5279,10 +5311,12 @@ static void interface_disconnect_result(const char *error,
 	if (result != -ECONNABORTED) {
 		if (network_remove(data) < 0) {
 			g_free(data->path);
+			remove_ssid(data->ssid);
 			dbus_free(data);
 		}
 	} else {
 		g_free(data->path);
+		remove_ssid(data->ssid);
 		dbus_free(data);
 	}
 }
