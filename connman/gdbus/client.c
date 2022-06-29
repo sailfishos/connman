@@ -3,7 +3,7 @@
  *  D-Bus helper library
  *
  *  Copyright (C) 2004-2011  Marcel Holtmann <marcel@holtmann.org>
- *
+ *  Copyright (C) 2022 Open Mobile Platform LLC.
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -722,6 +722,7 @@ gboolean g_dbus_proxy_set_property_basic(GDBusProxy *proxy,
 	}
 
 	dbus_pending_call_set_notify(call, set_property_reply, data, g_free);
+	dbus_pending_call_block(call);
 	dbus_pending_call_unref(call);
 
 	dbus_message_unref(msg);
@@ -809,6 +810,7 @@ gboolean g_dbus_proxy_set_property_array(GDBusProxy *proxy,
 	}
 
 	dbus_pending_call_set_notify(call, set_property_reply, data, g_free);
+	dbus_pending_call_block(call);
 	dbus_pending_call_unref(call);
 
 	dbus_message_unref(msg);
