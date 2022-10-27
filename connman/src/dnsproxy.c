@@ -1906,6 +1906,8 @@ static int strip_domains(char *name, char *answers, int maxlen)
 				end -= domain_len;
 				maxlen -= domain_len;
 			}
+		} else {
+			ptr = answers;
 		}
 
 		answers += strlen(answers) + 1;
