@@ -1784,7 +1784,7 @@ static const char* uncompress(int16_t field_count, const char *start, const char
 
 		if (!convert_label(start, end, ptr, name, NS_MAXLABEL,
 					&pos, &comp_pos))
-			goto out;
+			return NULL;
 
 		/*
 		 * Copy the uncompressed resource record, type, class and \0 to
@@ -1793,7 +1793,7 @@ static const char* uncompress(int16_t field_count, const char *start, const char
 
 		ulen = strlen(name) + 1;
 		if ((uptr + ulen) > uncomp_end)
-			goto out;
+			return NULL;
 		memcpy(uptr, name, ulen);
 
 		DBG("pos %d ulen %d left %d name %s", pos, ulen,
@@ -1809,7 +1809,7 @@ static const char* uncompress(int16_t field_count, const char *start, const char
 		 */
 		if ((uptr + NS_RRFIXEDSZ) > uncomp_end) {
 			DBG("uncompressed data too large for buffer");
-			goto out;
+			return NULL;
 		}
 		memcpy(uptr, ptr, NS_RRFIXEDSZ);
 
@@ -1817,7 +1817,7 @@ static const char* uncompress(int16_t field_count, const char *start, const char
 		dns_class = uptr[2] << 8 | uptr[3];
 
 		if (dns_class != DNS_CLASS_IN)
-			goto out;
+			return NULL;
 
 		ptr += NS_RRFIXEDSZ;
 		uptr += NS_RRFIXEDSZ;
@@ -1831,7 +1831,7 @@ static const char* uncompress(int16_t field_count, const char *start, const char
 			if (!convert_label(start, end, ptr, uptr,
 					uncomp_len - (uptr - uncompressed),
 						&pos, &comp_pos))
-				goto out;
+				return NULL;
 
 			uptr[-2] = comp_pos << 8;
 			uptr[-1] = comp_pos & 0xff;
@@ -1844,7 +1844,7 @@ static const char* uncompress(int16_t field_count, const char *start, const char
 
 			if ((ptr + dlen) > end || (uptr + dlen) > uncomp_end) {
 				DBG("data len %d too long", dlen);
-				goto out;
+				return NULL;
 			}
 
 			memcpy(uptr, ptr, dlen);
@@ -1859,7 +1859,7 @@ static const char* uncompress(int16_t field_count, const char *start, const char
 			if (!convert_label(start, end, ptr, uptr,
 					uncomp_len - (uptr - uncompressed),
 						&pos, &comp_pos))
-				goto out;
+				return NULL;
 
 			total_len += comp_pos;
 			len_ptr = &uptr[-2];
@@ -1870,7 +1870,7 @@ static const char* uncompress(int16_t field_count, const char *start, const char
 			if (!convert_label(start, end, ptr, uptr,
 					uncomp_len - (uptr - uncompressed),
 						&pos, &comp_pos))
-				goto out;
+				return NULL;
 
 			total_len += comp_pos;
 			ptr += pos;
@@ -1883,7 +1883,7 @@ static const char* uncompress(int16_t field_count, const char *start, const char
 			 */
 			if ((uptr + 20) > uncomp_end || (ptr + 20) > end) {
 				DBG("soa record too long");
-				goto out;
+				return NULL;
 			}
 			memcpy(uptr, ptr, 20);
 			uptr += 20;
@@ -1901,9 +1901,6 @@ static const char* uncompress(int16_t field_count, const char *start, const char
 	}
 
 	return ptr;
-
-out:
-	return NULL;
 }
 
 /*
