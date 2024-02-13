@@ -3400,11 +3400,11 @@ static GSupplicantSSID *ssid_ap_init(const char *ssid, const char *passphrase)
 		ap->security = G_SUPPLICANT_SECURITY_NONE;
 		ap->passphrase = NULL;
 	} else {
-	       ap->security = G_SUPPLICANT_SECURITY_PSK;
-	       ap->protocol = G_SUPPLICANT_PROTO_RSN;
-	       ap->pairwise_cipher = G_SUPPLICANT_PAIRWISE_CCMP;
-	       ap->group_cipher = G_SUPPLICANT_GROUP_CCMP;
-	       ap->passphrase = g_strdup(passphrase);
+		ap->security = G_SUPPLICANT_SECURITY_PSK;
+		ap->protocol = G_SUPPLICANT_PROTO_RSN;
+		ap->pairwise_cipher = G_SUPPLICANT_PAIRWISE_CCMP;
+		ap->group_cipher = G_SUPPLICANT_GROUP_CCMP;
+		ap->passphrase = g_strdup(passphrase);
 	}
 
 	return ap;
