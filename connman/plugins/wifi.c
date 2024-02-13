@@ -3384,6 +3384,12 @@ static GSupplicantSSID *ssid_ap_init(const char *ssid, const char *passphrase)
 	if (!ap)
 		return NULL;
 
+	ret = connman_technology_get_wifi_tethering(&ssid, &passphrase);
+	if (ret == false) {
+		g_free(ap);
+		return NULL;
+	}
+
 	ap->mode = G_SUPPLICANT_MODE_MASTER;
 	ap->ssid = g_strdup(ssid);
 	ap->ssid_len = strlen(ssid);
