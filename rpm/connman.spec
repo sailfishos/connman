@@ -7,8 +7,8 @@ URL:        http://connman.net/
 Source0:    %{name}-%{version}.tar.bz2
 Source1:    main.conf
 Source2:    01-require-home-mount-to-be-present.conf
-Requires:   dbus >= 1.4
-Requires:   wpa_supplicant >= 0.7.1
+Requires:   dbus
+Requires:   wpa_supplicant
 Requires:   ofono
 Requires:   pacrunner
 Requires:   connman-configs
@@ -24,8 +24,6 @@ Requires:   tayga >= 0.9.2
 Requires(preun): systemd
 Requires(post): systemd
 Requires(postun): systemd
-# license macro requires reasonably fresh rpm
-BuildRequires:  rpm >= 4.11
 BuildRequires:  pkgconfig(xtables) >= 1.6.1
 BuildRequires:	pkgconfig(libiptc)
 BuildRequires:  pkgconfig(glib-2.0) >= 2.62
@@ -95,7 +93,6 @@ FallbackTimeservers.
 %package doc
 Summary:    Documentation for %{name}
 Requires:   %{name} = %{version}-%{release}
-Obsoletes:  %{name}-docs
 
 %description doc
 Man pages for %{name}.
