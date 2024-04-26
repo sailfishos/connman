@@ -36,6 +36,7 @@
 #include <gdbus.h>
 
 #include "connman.h"
+#include "src/shared/util.h"
 
 #define CHAIN_PREFIX "connman-"
 
@@ -2317,82 +2318,40 @@ out:
 
 static int init_all_dynamic_firewall_rules(void)
 {
-	GList *iter;
-	GError *error = NULL;
-	GDir *dir;
-	const char *filename = NULL;
-	char *filepath = NULL;
 	int err;
 
 	err = init_dynamic_firewall_rules(FIREWALLCONFIGFILE);
-
-	if (g_file_test(FIREWALLCONFIGDIR, G_FILE_TEST_IS_DIR)) {
-		dir = g_dir_open(FIREWALLCONFIGDIR, 0, &error);
-
-		if (!dir) {
-			if (error) {
-				DBG("cannot open dir, error: %s",
-							error->message);
-				g_clear_error(&error);
-			}
-			goto out;
-		}
-
-		DBG("read configs from %s", FIREWALLCONFIGDIR);
-
-		/*
-		 * Ordering of files is not guaranteed with g_dir_open(). Read
-		 * the filenames into sorted GList.
-		 */
-		while ((filename = g_dir_read_name(dir))) {
-			/* Read configs that have firewall.conf suffix */
-			if (!g_str_has_suffix(filename, FIREWALLFILE))
-				continue;
-
-			/*
-			 * Prepend read files into list of configuration
-			 * files to be used in checks when new configurations
-			 * are added to avoid unnecessary reads of already read
-			 * configurations. Sort list after all are added.
-			 */
-			configuration_files = g_list_prepend(
-						configuration_files,
-						g_strdup(filename));
-		}
-
-		configuration_files = g_list_sort(configuration_files,
-					(GCompareFunc)g_strcmp0);
-
-		for (iter = configuration_files; iter; iter = iter->next) {
-			filename = iter->data;
-
-			filepath = g_strconcat(FIREWALLCONFIGDIR, filename,
-						NULL);
-			DBG("reading config %s", filepath);
-
-			/* Allow also symbolic links in configs */
-			if (g_file_test(filepath, G_FILE_TEST_IS_REGULAR)) {
-				if (init_dynamic_firewall_rules(filepath))
-					DBG("invalid firewall config");
-			}
-
-			g_free(filepath);
-		}
-
-		g_dir_close(dir);
-	} else {
-		DBG("no config dir %s", FIREWALLCONFIGDIR);
+	if (err) {
+		connman_warn("Failed to read main firewall config %s",
+							FIREWALLCONFIGFILE);
+		return err;
 	}
 
-	/* Error loading main configuration */
-	if (err)
+	err = util_read_config_files_from(FIREWALLCONFIGDIR, FIREWALLFILE,
+					&configuration_files,
+					init_dynamic_firewall_rules);
+	switch (err) {
+	case -EINVAL:
+	case -ENOMEM:
+		connman_warn("Failed to read configs from %s: %s",
+						FIREWALLCONFIGDIR,
+						strerror(-err));
 		return err;
+	case -ENOTDIR:
+	case -EACCES:
+		connman_warn("%s: %s, continue loading firewall",
+						FIREWALLCONFIGDIR,
+						strerror(-err));
+		break;
+	case 0:
+	default:
+		break;
+	}
 
-out:
 	err = enable_general_firewall();
-
 	if (err)
-		DBG("problem enabling");
+		DBG("problem enabling firewall");
+
 	return err;
 }
 
@@ -2577,19 +2536,21 @@ static int copy_new_dynamic_rules(struct firewall_context *dyn_ctx,
 }
 
 static int remove_config_from_context(struct firewall_context *ctx,
-						const char *config_file,
+						const char *config_file_path,
 						bool disable)
 {
 	GList *iter = NULL;
 	struct fw_rule *rule;
+	char *config_file;
 	int err = 0;
 	int e = 0;
 
-	if (!ctx || !config_file)
-		return e;
+	if (!ctx || !config_file_path)
+		return -EINVAL;
+
+	config_file = g_path_get_basename(config_file_path);
 
 	iter = g_list_first(ctx->rules);
-
 	while (iter) {
 		rule = iter->data;
 		iter = iter->next; /* Move to next before removal */
@@ -2622,6 +2583,8 @@ static int remove_config_from_context(struct firewall_context *ctx,
 		}
 	}
 
+	g_free(config_file);
+
 	return e;
 }
 
@@ -2637,14 +2600,12 @@ static void firewall_config_removed(const char *config_file)
 
 	err = remove_config_from_context(general_firewall->ctx, config_file,
 				true);
-
 	if (err)
 		DBG("cannot remove deleted rules.");
 
 	DBG("removing config %s rules from tethering firewall", config_file);
 
 	err = remove_config_from_context(tethering_firewall, config_file, true);
-
 	if (err)
 		DBG("cannot remove deleted rules.");
 
@@ -2664,7 +2625,6 @@ static void firewall_config_removed(const char *config_file)
 	}
 
 	g_hash_table_iter_init(&iter, current_dynamic_rules);
-
 	while (g_hash_table_iter_next(&iter, &key, &value)) {
 		ctx = value;
 
@@ -2698,20 +2658,15 @@ static int enable_new_firewall_rules(struct connman_service *service,
 
 static int firewall_reload_configurations()
 {
-	GError *error = NULL;
-	GDir *dir;
-	GSList *read_files = NULL;
-	GSList *slist_iter = NULL;
+	GList *read_files = NULL;
 	GList *list_iter = NULL;
 	GHashTableIter iter;
 	gpointer key, value;
 	struct connman_service *service;
 	enum connman_service_type type;
 	struct firewall_context *ctx;
-	const char *filename;
 	const char *config_file;
 	char *ifname;
-	char *filepath;
 	bool new_configuration_files = false;
 	int err = 0;
 
@@ -2719,77 +2674,56 @@ static int firewall_reload_configurations()
 	if (!g_file_test(FIREWALLCONFIGDIR, G_FILE_TEST_IS_DIR))
 		return 0;
 
-	dir = g_dir_open(FIREWALLCONFIGDIR, 0, &error);
-
-	if (!dir) {
-		if (error) {
-			DBG("cannot open dir, error: %s", error->message);
-			g_clear_error(&error);
-		}
-
-		/* Ignore dir open error in reload */
-		return 0;
+	/* Read the filenames only and do not use callback to process */
+	err = util_read_config_files_from(FIREWALLCONFIGDIR, FIREWALLFILE,
+					&read_files, NULL);
+	switch (err) {
+	case -EINVAL:
+	case -ENOMEM:
+		connman_warn("Failed to read configs from %s: %s",
+						FIREWALLCONFIGDIR,
+						strerror(-err));
+		return err;
+	case -ENOTDIR:
+	case -EACCES:
+		connman_warn("%s: %s, continue reloading firewall",
+						FIREWALLCONFIGDIR,
+						strerror(-err));
+		break;
+	case 0:
+	default:
+		break;
 	}
-
-	DBG("read configs from %s", FIREWALLCONFIGDIR);
-
-	/* Read filenames into ordered list */
-	while ((filename = g_dir_read_name(dir))) {
-		/* Read configs that have firewall.conf suffix */
-		if (!g_str_has_suffix(filename, FIREWALLFILE))
-			continue;
-
-		/*
-		 * Add file name to read file list for checking if config file
-		 * has been removed. At this point ignore file tests.
-		 */
-		read_files = g_slist_prepend(read_files, g_strdup(filename));
-	}
-
-	read_files = g_slist_sort(read_files, (GCompareFunc)g_strcmp0);
-
-	g_dir_close(dir);
 
 	/* Process ordered list of configuration files */
-	for (slist_iter = read_files; slist_iter;
-				slist_iter = slist_iter->next) {
-		filename = slist_iter->data;
+	for (list_iter = read_files; list_iter; list_iter = list_iter->next) {
+		config_file = list_iter->data;
 
 		/* If config file is already read */
-		if (g_list_find_custom(configuration_files, filename,
+		if (g_list_find_custom(configuration_files, config_file,
 					(GCompareFunc)g_strcmp0))
 			continue;
 
-		filepath = g_strconcat(FIREWALLCONFIGDIR, filename, NULL);
+		DBG("processing new config %s", config_file);
 
-		DBG("processing new config %s", filepath);
+		err = init_dynamic_firewall_rules(config_file);
+		if (!err) {
+			DBG("new configuration %s loaded", config_file);
 
-		if (g_file_test(filepath, G_FILE_TEST_IS_REGULAR)) {
+			configuration_files = g_list_prepend(
+						configuration_files,
+						g_strdup(config_file));
 
-			err = init_dynamic_firewall_rules(filepath);
-
-			if (!err) {
-				DBG("new configuration %s loaded", filepath);
-
-				configuration_files = g_list_prepend(
-							configuration_files,
-							g_strdup(filename));
-
-				new_configuration_files = true;
-			}
+			new_configuration_files = true;
 		}
-
-		g_free(filepath);
 	}
 
 	configuration_files = g_list_sort(configuration_files,
 				(GCompareFunc)g_strcmp0);
 
-	list_iter = g_list_last(configuration_files);
-
 	/* First check if any configs has been removed */
-	while (list_iter)
-	{
+	list_iter = g_list_last(configuration_files);
+	while (list_iter) {
 		config_file = list_iter->data;
 		GList *list_iter_prev = g_list_previous(list_iter);
 
@@ -2798,7 +2732,7 @@ static int firewall_reload_configurations()
 		 * was previously read is not in the list of previosly read
 		 * remove rules read from that removed config file.
 		 */
-		if (!g_slist_find_custom(read_files, config_file,
+		if (!g_list_find_custom(read_files, config_file,
 					(GCompareFunc)g_strcmp0)) {
 			DBG("config %s removed, deleting rules", config_file);
 
@@ -2812,7 +2746,7 @@ static int firewall_reload_configurations()
 		list_iter = list_iter_prev;
 	}
 
-	g_slist_free_full(read_files, g_free);
+	g_list_free_full(read_files, g_free);
 
 	/* Then check if there are new configs that were read without errors */
 	if (!new_configuration_files) {
@@ -2823,15 +2757,13 @@ static int firewall_reload_configurations()
 	/* Apply general firewall rules that were added */
 	firewall_enable_rules(general_firewall->ctx);
 
-	g_hash_table_iter_init(&iter, current_dynamic_rules);
-
 	/*
 	 * Go through all service specific firewalls and add new rules
 	 * for each.
 	 */
+	g_hash_table_iter_init(&iter, current_dynamic_rules);
 	while (g_hash_table_iter_next(&iter, &key, &value)) {
 		service = connman_service_lookup_from_identifier(key);
-
 		if (!service)
 			continue;
 
@@ -2842,9 +2774,7 @@ static int firewall_reload_configurations()
 			continue;
 
 		ctx = value;
-
 		copy_new_dynamic_rules(dynamic_rules[type], ctx, ifname);
-
 		g_free(ifname);
 	}
 
