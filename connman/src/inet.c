@@ -1386,6 +1386,8 @@ int connman_inet_remove_from_bridge(int index, const char *bridge)
 	if (!bridge)
 		return -EINVAL;
 
+	DBG("index %d name %s", index, bridge);
+
 	sk = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
 	if (sk < 0) {
 		err = -errno;
@@ -1411,31 +1413,39 @@ out:
 
 int connman_inet_add_to_bridge(int index, const char *bridge)
 {
-	struct ifreq ifr;
-	int sk, err = 0;
+	struct __connman_inet_rtnl_handle rth;
+	int bridge_index;
+	int err;
 
-	if (!bridge)
+	bridge_index = connman_inet_ifindex(bridge);
+	if (bridge_index < 0)
 		return -EINVAL;
 
-	sk = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
-	if (sk < 0) {
-		err = -errno;
-		goto out;
-	}
+	DBG("bridge index %d", bridge_index);
 
-	memset(&ifr, 0, sizeof(ifr));
-	strncpy(ifr.ifr_name, bridge, sizeof(ifr.ifr_name) - 1);
-	ifr.ifr_ifindex = index;
+	rth.req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct ifinfomsg));
+	rth.req.n.nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE | NLM_F_EXCL;
+	rth.req.n.nlmsg_type = RTM_NEWLINK;
 
-	if (ioctl(sk, SIOCBRADDIF, &ifr) < 0)
-		err = -errno;
+	rth.req.u.f.ifi.ifi_family = AF_UNSPEC;
+	rth.req.u.f.ifi.ifi_index = index;
 
-	close(sk);
+	__connman_inet_rtnl_addattr_l(&rth.req.n, sizeof(rth.req),
+						IFLA_MASTER, &bridge_index,
+						sizeof(int));
 
-out:
-	if (err < 0)
+	err = __connman_inet_rtnl_open(&rth);
+	if (err)
+		goto done;
+
+	err = __connman_inet_rtnl_send(&rth, &rth.req.n);
+
+done:
+	if (err)
 		connman_error("Add interface to bridge error %s",
 							strerror(-err));
+
+	__connman_inet_rtnl_close(&rth);
 
 	return err;
 }
