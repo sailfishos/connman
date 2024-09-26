@@ -1411,6 +1411,159 @@ out:
 	return err;
 }
 
+static int parse_rtattr(struct rtattr *tb[], int max,
+			struct rtattr *rta, int len);
+
+#include <netinet/ether.h>
+static inline void print_ether(struct rtattr *attr, const char *name)
+{
+	int len = (int) RTA_PAYLOAD(attr);
+
+	if (len == ETH_ALEN) {
+		struct ether_addr eth;
+		memcpy(&eth, RTA_DATA(attr), ETH_ALEN);
+		DBG("  attr %s (len %d) %s\n", name, len, ether_ntoa(&eth));
+	} else
+		DBG("  attr %s (len %d)\n", name, len);
+}
+
+static inline void print_string(struct rtattr *attr, const char *name)
+{
+	DBG("  attr %s (len %d) %s\n", name, (int) RTA_PAYLOAD(attr),
+						(char *) RTA_DATA(attr));
+}
+
+static inline void print_byte(struct rtattr *attr, const char *name)
+{
+	DBG("  attr %s (len %d) 0x%02x\n", name, (int) RTA_PAYLOAD(attr),
+					*((unsigned char *) RTA_DATA(attr)));
+}
+
+static inline void print_integer(struct rtattr *attr, const char *name)
+{
+	DBG("  attr %s (len %d) %d\n", name, (int) RTA_PAYLOAD(attr),
+						*((int *) RTA_DATA(attr)));
+}
+
+static inline void print_attr(struct rtattr *attr, const char *name)
+{
+	int len = (int) RTA_PAYLOAD(attr);
+
+	if (name && len > 0)
+		DBG("  attr %s (len %d)\n", name, len);
+	else
+		DBG("  attr %d (len %d)\n", attr->rta_type, len);
+}
+
+static void print_rtnlmsghdr(struct nlmsghdr *hdr)
+{
+	struct ifinfomsg *msg;
+	struct rtattr *attr;
+	int bytes;
+
+	msg = (struct ifinfomsg *) NLMSG_DATA(hdr);
+	bytes = IFLA_PAYLOAD(hdr);
+
+	DBG("ifi_index %d ifi_flags 0x%04x", msg->ifi_index, msg->ifi_flags);
+
+	for (attr = IFLA_RTA(msg); RTA_OK(attr, bytes);
+					attr = RTA_NEXT(attr, bytes)) {
+		switch (attr->rta_type) {
+		case IFLA_ADDRESS:
+			print_ether(attr, "address");
+			break;
+		case IFLA_BROADCAST:
+			print_ether(attr, "broadcast");
+			break;
+		case IFLA_IFNAME:
+			print_string(attr, "ifname");
+			break;
+		case IFLA_MTU:
+			print_integer(attr, "mtu");
+			break;
+		case IFLA_LINK:
+			print_attr(attr, "link");
+			break;
+		case IFLA_QDISC:
+			print_attr(attr, "qdisc");
+			break;
+		case IFLA_STATS64:
+			print_attr(attr, "stats");
+			break;
+		case IFLA_COST:
+			print_attr(attr, "cost");
+			break;
+		case IFLA_PRIORITY:
+			print_attr(attr, "priority");
+			break;
+		case IFLA_MASTER:
+			print_attr(attr, "master");
+			break;
+		case IFLA_WIRELESS:
+			print_attr(attr, "wireless");
+			break;
+		case IFLA_PROTINFO:
+			print_attr(attr, "protinfo");
+			break;
+		case IFLA_TXQLEN:
+			print_integer(attr, "txqlen");
+			break;
+		case IFLA_MAP:
+			print_attr(attr, "map");
+			break;
+		case IFLA_WEIGHT:
+			print_attr(attr, "weight");
+			break;
+		case IFLA_OPERSTATE:
+			print_byte(attr, "operstate");
+			break;
+		case IFLA_LINKMODE:
+			print_byte(attr, "linkmode");
+			break;
+		default:
+			print_attr(attr, NULL);
+			break;
+		}
+	}
+}
+
+static void add_to_bridge_cb(struct nlmsghdr *answer, void *user_data)
+{
+	struct rtattr *tb[RTA_MAX+1];
+	struct rtmsg *r = NLMSG_DATA(answer);
+	int len, index = -1;
+
+	DBG("answer %p data %p", answer, user_data);
+
+	if (!answer)
+		return;
+
+	len = answer->nlmsg_len;
+
+	if (answer->nlmsg_type != RTM_NEWLINK &&
+				answer->nlmsg_type != RTM_DELLINK) {
+		connman_error("Not a link: %08x %08x %08x",
+			answer->nlmsg_len, answer->nlmsg_type,
+			answer->nlmsg_flags);
+		return;
+	}
+
+	len -= NLMSG_LENGTH(sizeof(*r));
+	if (len < 0) {
+		connman_error("BUG: wrong nlmsg len %d", len);
+		return;
+	}
+
+	parse_rtattr(tb, RTA_MAX, RTM_RTA(r), len);
+
+	if (tb[RTA_OIF])
+		index = *(int *)RTA_DATA(tb[RTA_OIF]);
+
+	DBG("index %d", index);
+
+	print_rtnlmsghdr(answer);
+}
+
 int connman_inet_add_to_bridge(int index, const char *bridge)
 {
 	struct __connman_inet_rtnl_handle rth;
@@ -1428,16 +1581,17 @@ int connman_inet_add_to_bridge(int index, const char *bridge)
 	rth.req.n.nlmsg_type = RTM_NEWLINK;
 
 	rth.req.u.f.ifi.ifi_family = AF_UNSPEC;
-	rth.req.u.f.ifi.ifi_index = index;
+	rth.req.u.f.ifi.ifi_index = bridge_index;
 
 	__connman_inet_rtnl_addattr_l(&rth.req.n, sizeof(rth.req),
-						IFLA_MASTER, &bridge_index,
+						IFLA_MASTER, &index,
 						sizeof(int));
 
 	err = __connman_inet_rtnl_open(&rth);
 	if (err)
 		goto done;
 
+	__connman_inet_rtnl_talk(&rth, &rth.req.n, 2, add_to_bridge_cb, NULL);
 	err = __connman_inet_rtnl_send(&rth, &rth.req.n);
 
 done:
