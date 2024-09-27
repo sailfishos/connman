@@ -1566,7 +1566,7 @@ static void add_to_bridge_cb(struct nlmsghdr *answer, void *user_data)
 
 int connman_inet_add_to_bridge(int index, const char *bridge)
 {
-	struct __connman_inet_rtnl_handle rth;
+	struct __connman_inet_rtnl_handle *rth;
 	int bridge_index;
 	int err;
 
@@ -1580,33 +1580,71 @@ int connman_inet_add_to_bridge(int index, const char *bridge)
 
 	DBG("bridge index %d", bridge_index);
 
-	rth.req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct ifinfomsg));
-	rth.req.n.nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE | NLM_F_EXCL;
-	rth.req.n.nlmsg_type = RTM_NEWLINK;
+	rth = g_new0(struct __connman_inet_rtnl_handle, 1);
+	rth->req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct ifinfomsg));
+	rth->req.n.nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE | NLM_F_EXCL;
+	rth->req.n.nlmsg_type = RTM_NEWLINK;
 
-	rth.req.u.f.ifi.ifi_family = AF_UNSPEC;
-	rth.req.u.f.ifi.ifi_index = bridge_index;
+	rth->req.u.f.ifi.ifi_family = AF_UNSPEC;
+	rth->req.u.f.ifi.ifi_index = index;
 
-	__connman_inet_rtnl_addattr_l(&rth.req.n, sizeof(rth.req),
-						IFLA_MASTER, &index,
-						sizeof(int));
+	/*__connman_inet_rtnl_addattr_l(&rth->req.n, sizeof(rth->req),
+						IFLA_MASTER, &bridge_index,
+						sizeof(int));*/
+	__connman_inet_rtnl_addattr32(&rth->req.n, sizeof(rth->req),
+							IFLA_MASTER,
+							(__u32)bridge_index);
 
-	err = __connman_inet_rtnl_open(&rth);
+	err = __connman_inet_rtnl_open(rth);
 	if (err)
 		goto done;
 
-	__connman_inet_rtnl_talk(&rth, &rth.req.n, 2, add_to_bridge_cb, NULL);
-	err = __connman_inet_rtnl_send(&rth, &rth.req.n);
+	err = __connman_inet_rtnl_talk(rth, &rth->req.n, 2, add_to_bridge_cb,
+									rth);
+	if (!err)
+		return 0;
 
 done:
 	if (err)
 		connman_error("Add interface to bridge error %s",
 							strerror(-err));
 
-	__connman_inet_rtnl_close(&rth);
+	__connman_inet_rtnl_close(rth);
+	g_free(rth);
 
 	return err;
 }
+/*
+int connman_inet_add_to_bridge(int index, const char *bridge)
+{
+        struct ifreq ifr;
+        int sk, err = 0;
+
+        if (!bridge)
+                return -EINVAL;
+
+        sk = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        if (sk < 0) {
+                err = -errno;
+                goto out;
+        }
+
+        memset(&ifr, 0, sizeof(ifr));
+        strncpy(ifr.ifr_name, bridge, sizeof(ifr.ifr_name) - 1);
+        ifr.ifr_ifindex = index;
+
+        if (ioctl(sk, SIOCBRADDIF, &ifr) < 0)
+                err = -errno;
+
+        close(sk);
+
+out:
+        if (err < 0)
+                connman_error("Add interface to bridge error %s",
+                                                        strerror(-err));
+
+        return err;
+}*/
 
 int connman_inet_set_mtu(int index, int mtu)
 {
