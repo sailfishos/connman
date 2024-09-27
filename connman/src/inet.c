@@ -1578,7 +1578,7 @@ int connman_inet_add_to_bridge(int index, const char *bridge)
 		return -EINVAL;
 	}
 
-	DBG("bridge index %d", bridge_index);
+	DBG("index %d -> bridge index %d", index, bridge_index);
 
 	rth = g_new0(struct __connman_inet_rtnl_handle, 1);
 	rth->req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct ifinfomsg));
@@ -1600,7 +1600,7 @@ int connman_inet_add_to_bridge(int index, const char *bridge)
 		goto done;
 
 	err = __connman_inet_rtnl_talk(rth, &rth->req.n, 2, add_to_bridge_cb,
-									rth);
+									NULL);
 	if (!err)
 		return 0;
 
