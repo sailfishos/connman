@@ -1570,9 +1570,13 @@ int connman_inet_add_to_bridge(int index, const char *bridge)
 	int bridge_index;
 	int err;
 
+	DBG("");
+
 	bridge_index = connman_inet_ifindex(bridge);
-	if (bridge_index < 0)
+	if (bridge_index < 0) {
+		connman_error("no index for bridge %s", bridge);
 		return -EINVAL;
+	}
 
 	DBG("bridge index %d", bridge_index);
 
