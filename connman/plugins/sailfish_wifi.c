@@ -3652,18 +3652,6 @@ static void wifi_device_tether_ok(struct wifi_device *dev)
 		gsupplicant_interface_add_handler(dev->iface,
 			GSUPPLICANT_INTERFACE_PROPERTY_COUNTRY,
 			wifi_device_country_changed, dev);
-
-	if (dev->bridge_watch) {
-		DBG("has already a watch");
-		connman_rtnl_remove_watch(dev->bridge_watch);
-	}
-
-	int index = connman_inet_ifindex(dev->bridge);
-	DBG("add watch for %d:%s", index, dev->bridge);
-
-	if (index >= 0)
-		dev->bridge_watch = connman_rtnl_add_newlink_watch(
-					index, wifi_device_newlink, dev);
 }
 
 static void wifi_device_tether_8(GSupplicantInterface *iface,
@@ -3773,6 +3761,7 @@ static void wifi_device_tether_4(GSupplicant *supplicant, GCancellable *cancel,
 static GCancellable *wifi_device_tether_3(struct wifi_device *dev)
 {
 	GSupplicantCreateInterfaceParams params;
+	GCancellable *c;
 	int err;
 
 	/*
@@ -3797,8 +3786,23 @@ static GCancellable *wifi_device_tether_3(struct wifi_device *dev)
 	params.driver = connman_setting_get_string("wifi");
 
 	DBG("creating interface %s/%s", params.ifname, params.bridge_ifname);
-	return gsupplicant_create_interface(dev->supplicant, &params,
+	c = gsupplicant_create_interface(dev->supplicant, &params,
 						wifi_device_tether_4, dev);
+	if (c) {
+		if (dev->bridge_watch) {
+			DBG("has already a watch");
+			connman_rtnl_remove_watch(dev->bridge_watch);
+		}
+
+		int index = connman_inet_ifindex(dev->bridge);
+		DBG("add watch for %d:%s", index, dev->bridge);
+
+		if (index >= 0)
+			dev->bridge_watch = connman_rtnl_add_newlink_watch(
+						index, wifi_device_newlink, dev);
+	}
+
+	return c;
 }
 
 static void wifi_device_tether_2(GSupplicant *supplicant, GCancellable *cancel,
