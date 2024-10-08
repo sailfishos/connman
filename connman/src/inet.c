@@ -1386,6 +1386,8 @@ int connman_inet_remove_from_bridge(int index, const char *bridge)
 	if (!bridge)
 		return -EINVAL;
 
+	DBG("index %d name %s", index, bridge);
+
 	sk = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
 	if (sk < 0) {
 		err = -errno;
@@ -1409,36 +1411,240 @@ out:
 	return err;
 }
 
-int connman_inet_add_to_bridge(int index, const char *bridge)
+static int parse_rtattr(struct rtattr *tb[], int max,
+			struct rtattr *rta, int len);
+
+#include <netinet/ether.h>
+static inline void print_ether(struct rtattr *attr, const char *name)
 {
-	struct ifreq ifr;
-	int sk, err = 0;
+	int len = (int) RTA_PAYLOAD(attr);
 
-	if (!bridge)
-		return -EINVAL;
+	if (len == ETH_ALEN) {
+		struct ether_addr eth;
+		memcpy(&eth, RTA_DATA(attr), ETH_ALEN);
+		DBG("  attr %s (len %d) %s\n", name, len, ether_ntoa(&eth));
+	} else
+		DBG("  attr %s (len %d)\n", name, len);
+}
 
-	sk = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
-	if (sk < 0) {
-		err = -errno;
-		goto out;
+static inline void print_string(struct rtattr *attr, const char *name)
+{
+	DBG("  attr %s (len %d) %s\n", name, (int) RTA_PAYLOAD(attr),
+						(char *) RTA_DATA(attr));
+}
+
+static inline void print_byte(struct rtattr *attr, const char *name)
+{
+	DBG("  attr %s (len %d) 0x%02x\n", name, (int) RTA_PAYLOAD(attr),
+					*((unsigned char *) RTA_DATA(attr)));
+}
+
+static inline void print_integer(struct rtattr *attr, const char *name)
+{
+	DBG("  attr %s (len %d) %d\n", name, (int) RTA_PAYLOAD(attr),
+						*((int *) RTA_DATA(attr)));
+}
+
+static inline void print_attr(struct rtattr *attr, const char *name)
+{
+	int len = (int) RTA_PAYLOAD(attr);
+
+	if (name && len > 0)
+		DBG("  attr %s (len %d)\n", name, len);
+	else
+		DBG("  attr %d (len %d)\n", attr->rta_type, len);
+}
+
+static void print_rtnlmsghdr(struct nlmsghdr *hdr)
+{
+	struct ifinfomsg *msg;
+	struct rtattr *attr;
+	int bytes;
+
+	msg = (struct ifinfomsg *) NLMSG_DATA(hdr);
+	bytes = IFLA_PAYLOAD(hdr);
+
+	DBG("ifi_index %d ifi_flags 0x%04x", msg->ifi_index, msg->ifi_flags);
+
+	for (attr = IFLA_RTA(msg); RTA_OK(attr, bytes);
+					attr = RTA_NEXT(attr, bytes)) {
+		switch (attr->rta_type) {
+		case IFLA_ADDRESS:
+			print_ether(attr, "address");
+			break;
+		case IFLA_BROADCAST:
+			print_ether(attr, "broadcast");
+			break;
+		case IFLA_IFNAME:
+			print_string(attr, "ifname");
+			break;
+		case IFLA_MTU:
+			print_integer(attr, "mtu");
+			break;
+		case IFLA_LINK:
+			print_attr(attr, "link");
+			break;
+		case IFLA_QDISC:
+			print_attr(attr, "qdisc");
+			break;
+		case IFLA_STATS64:
+			print_attr(attr, "stats");
+			break;
+		case IFLA_COST:
+			print_attr(attr, "cost");
+			break;
+		case IFLA_PRIORITY:
+			print_attr(attr, "priority");
+			break;
+		case IFLA_MASTER:
+			print_attr(attr, "master");
+			break;
+		case IFLA_WIRELESS:
+			print_attr(attr, "wireless");
+			break;
+		case IFLA_PROTINFO:
+			print_attr(attr, "protinfo");
+			break;
+		case IFLA_TXQLEN:
+			print_integer(attr, "txqlen");
+			break;
+		case IFLA_MAP:
+			print_attr(attr, "map");
+			break;
+		case IFLA_WEIGHT:
+			print_attr(attr, "weight");
+			break;
+		case IFLA_OPERSTATE:
+			print_byte(attr, "operstate");
+			break;
+		case IFLA_LINKMODE:
+			print_byte(attr, "linkmode");
+			break;
+		default:
+			print_attr(attr, NULL);
+			break;
+		}
+	}
+}
+
+static void add_to_bridge_cb(struct nlmsghdr *answer, void *user_data)
+{
+	struct rtattr *tb[RTA_MAX+1];
+	struct rtmsg *r = NLMSG_DATA(answer);
+	int len, index = -1;
+
+	DBG("answer %p data %p", answer, user_data);
+
+	if (!answer)
+		return;
+
+	len = answer->nlmsg_len;
+
+	if (answer->nlmsg_type != RTM_NEWLINK &&
+				answer->nlmsg_type != RTM_DELLINK) {
+		connman_error("Not a link: %08x %08x %08x",
+			answer->nlmsg_len, answer->nlmsg_type,
+			answer->nlmsg_flags);
+		return;
 	}
 
-	memset(&ifr, 0, sizeof(ifr));
-	strncpy(ifr.ifr_name, bridge, sizeof(ifr.ifr_name) - 1);
-	ifr.ifr_ifindex = index;
+	len -= NLMSG_LENGTH(sizeof(*r));
+	if (len < 0) {
+		connman_error("BUG: wrong nlmsg len %d", len);
+		return;
+	}
 
-	if (ioctl(sk, SIOCBRADDIF, &ifr) < 0)
-		err = -errno;
+	parse_rtattr(tb, RTA_MAX, RTM_RTA(r), len);
 
-	close(sk);
+	if (tb[RTA_OIF])
+		index = *(int *)RTA_DATA(tb[RTA_OIF]);
 
-out:
-	if (err < 0)
+	DBG("index %d", index);
+
+	print_rtnlmsghdr(answer);
+}
+
+int connman_inet_add_to_bridge(int index, const char *bridge)
+{
+	struct __connman_inet_rtnl_handle *rth;
+	int bridge_index;
+	int err;
+
+	DBG("");
+
+	bridge_index = connman_inet_ifindex(bridge);
+	if (bridge_index < 0) {
+		connman_error("no index for bridge %s", bridge);
+		return -EINVAL;
+	}
+
+	DBG("index %d -> bridge index %d", index, bridge_index);
+
+	rth = g_new0(struct __connman_inet_rtnl_handle, 1);
+	rth->req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct ifinfomsg));
+	rth->req.n.nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE | NLM_F_EXCL;
+	rth->req.n.nlmsg_type = RTM_NEWLINK;
+
+	rth->req.u.f.ifi.ifi_family = AF_UNSPEC;
+	rth->req.u.f.ifi.ifi_index = index;
+
+	/*__connman_inet_rtnl_addattr_l(&rth->req.n, sizeof(rth->req),
+						IFLA_MASTER, &bridge_index,
+						sizeof(int));*/
+	__connman_inet_rtnl_addattr32(&rth->req.n, sizeof(rth->req),
+							IFLA_MASTER,
+							(__u32)bridge_index);
+
+	err = __connman_inet_rtnl_open(rth);
+	if (err)
+		goto done;
+
+	err = __connman_inet_rtnl_talk(rth, &rth->req.n, 2, add_to_bridge_cb,
+									NULL);
+	if (!err)
+		return 0;
+
+done:
+	if (err)
 		connman_error("Add interface to bridge error %s",
 							strerror(-err));
 
+	__connman_inet_rtnl_close(rth);
+	g_free(rth);
+
 	return err;
 }
+/*
+int connman_inet_add_to_bridge(int index, const char *bridge)
+{
+        struct ifreq ifr;
+        int sk, err = 0;
+
+        if (!bridge)
+                return -EINVAL;
+
+        sk = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        if (sk < 0) {
+                err = -errno;
+                goto out;
+        }
+
+        memset(&ifr, 0, sizeof(ifr));
+        strncpy(ifr.ifr_name, bridge, sizeof(ifr.ifr_name) - 1);
+        ifr.ifr_ifindex = index;
+
+        if (ioctl(sk, SIOCBRADDIF, &ifr) < 0)
+                err = -errno;
+
+        close(sk);
+
+out:
+        if (err < 0)
+                connman_error("Add interface to bridge error %s",
+                                                        strerror(-err));
+
+        return err;
+}*/
 
 int connman_inet_set_mtu(int index, int mtu)
 {

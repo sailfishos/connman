@@ -306,6 +306,7 @@ struct wifi_device {
 	struct connman_technology *tethering;
 	gboolean bridged;
 	char *bridge;
+	unsigned int bridge_watch;
 };
 
 struct wifi_plugin {
@@ -3616,6 +3617,8 @@ static int wifi_device_on_start(struct wifi_device *dev)
 
 static void wifi_device_bridge_check(struct wifi_device *dev)
 {
+	DBG("");
+
 	if ((dev->iff & IFF_LOWER_UP) && dev->tethering &&
 					dev->bridge && !dev->bridged) {
 		DBG("index %d bridge %s", dev->ifi, dev->bridge);
@@ -3630,6 +3633,9 @@ static void wifi_tether_failed(struct wifi_device *dev)
 	DBG("failed to enable tethering");
 	wifi_device_on_start(dev);
 }
+
+static void wifi_device_newlink(unsigned int flags, unsigned int change,
+								void *data);
 
 static void wifi_device_tether_ok(struct wifi_device *dev)
 {
@@ -3755,6 +3761,7 @@ static void wifi_device_tether_4(GSupplicant *supplicant, GCancellable *cancel,
 static GCancellable *wifi_device_tether_3(struct wifi_device *dev)
 {
 	GSupplicantCreateInterfaceParams params;
+	GCancellable *c;
 	int err;
 
 	/*
@@ -3779,8 +3786,23 @@ static GCancellable *wifi_device_tether_3(struct wifi_device *dev)
 	params.driver = connman_setting_get_string("wifi");
 
 	DBG("creating interface %s/%s", params.ifname, params.bridge_ifname);
-	return gsupplicant_create_interface(dev->supplicant, &params,
+	c = gsupplicant_create_interface(dev->supplicant, &params,
 						wifi_device_tether_4, dev);
+	if (c) {
+		if (dev->bridge_watch) {
+			DBG("has already a watch");
+			connman_rtnl_remove_watch(dev->bridge_watch);
+		}
+
+		int index = connman_inet_ifindex(dev->bridge);
+		DBG("add watch for %d:%s", index, dev->bridge);
+
+		if (index >= 0)
+			dev->bridge_watch = connman_rtnl_add_newlink_watch(
+						index, wifi_device_newlink, dev);
+	}
+
+	return c;
 }
 
 static void wifi_device_tether_2(GSupplicant *supplicant, GCancellable *cancel,
@@ -4078,6 +4100,9 @@ static void wifi_device_newlink(unsigned int flags, unsigned int change,
 	struct wifi_device *dev = data;
 	const unsigned int old_flags = dev->iff;
 
+	DBG("old IFF_UP %d LOWER_UP %d", old_flags & IFF_UP, old_flags & IFF_LOWER_UP);
+	DBG("new IFF_UP %d LOWER_UP %d", flags & IFF_UP, flags & IFF_LOWER_UP);
+
 	dev->iff = flags;
 	if ((old_flags & IFF_UP) != (flags & IFF_UP)) {
 		DBG("interface %s", (flags & IFF_UP) ? "up" : "down");
@@ -4205,6 +4230,7 @@ static void wifi_device_delete(struct wifi_device *dev)
 	wifi_device_tp_free(dev->tp);
 
 	connman_rtnl_remove_watch(dev->watch);
+	connman_rtnl_remove_watch(dev->bridge_watch);
 	if (dev->device) {
 		connman_device_set_powered(dev->device, FALSE);
 		connman_device_set_data(dev->device, NULL);
