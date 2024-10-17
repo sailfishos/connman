@@ -107,13 +107,16 @@ static struct gateway_data *lookup_gateway_data(struct gateway_config *config)
 	return NULL;
 }
 
-static struct gateway_data *find_vpn_gateway(int index, const char *gateway)
+static struct gateway_data *find_vpn_gateway(int index, const char *gateway,
+						enum connman_ipconfig_type type)
 {
 	GHashTableIter iter;
 	gpointer value, key;
 
 	if (!gateway)
 		return NULL;
+
+	DBG("index %d type %d gateway %s", index, type, gateway);
 
 	g_hash_table_iter_init(&iter, gateway_hash);
 
@@ -122,12 +125,14 @@ static struct gateway_data *find_vpn_gateway(int index, const char *gateway)
 
 		if (data->ipv4_gateway && data->index4 == index &&
 				g_str_equal(data->ipv4_gateway->gateway,
-					gateway))
+					gateway) &&
+				type == CONNMAN_IPCONFIG_TYPE_IPV4)
 			return data;
 
 		if (data->ipv6_gateway && data->index6 == index &&
 				g_str_equal(data->ipv6_gateway->gateway,
-					gateway))
+					gateway) &&
+				type == CONNMAN_IPCONFIG_TYPE_IPV6)
 			return data;
 	}
 
@@ -135,6 +140,7 @@ static struct gateway_data *find_vpn_gateway(int index, const char *gateway)
 }
 
 struct get_gateway_params {
+	enum connman_ipconfig_type type;
 	char *vpn_gateway;
 	int vpn_index;
 };
@@ -152,7 +158,8 @@ static void get_gateway_cb(const char *gateway, int index, void *user_data)
 	DBG("phy index %d phy gw %s vpn index %d vpn gw %s", index, gateway,
 		params->vpn_index, params->vpn_gateway);
 
-	data = find_vpn_gateway(params->vpn_index, params->vpn_gateway);
+	data = find_vpn_gateway(params->vpn_index, params->vpn_gateway,
+								params->type);
 	if (!data) {
 		DBG("Cannot find VPN link route, index %d addr %s",
 			params->vpn_index, params->vpn_gateway);
@@ -214,6 +221,7 @@ static void set_vpn_routes(struct gateway_data *new_gateway,
 		if (!params)
 			return;
 
+		params->type = type;
 		params->vpn_index = index;
 		params->vpn_gateway = g_strdup(gateway);
 
