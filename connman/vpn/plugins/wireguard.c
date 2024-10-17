@@ -245,50 +245,67 @@ static int parse_endpoint(const char *host, const char *port, struct sockaddr_u 
 	return 0;
 }
 
-static int parse_address(const char *address, const char *gateway,
-		struct connman_ipaddress **ipaddress)
+static int parse_addresses(const char *address, const char *gateway,
+		GSList **ipaddresses)
 {
+	struct connman_ipaddress *ipaddress = NULL;
 	char buf[INET6_ADDRSTRLEN];
 	unsigned char prefixlen;
+	char **addresses;
 	char **tokens;
 	char *end, *netmask;
 	int err;
+	int i;
 
-	tokens = g_strsplit(address, "/", -1);
-	if (g_strv_length(tokens) != 2) {
-		g_strfreev(tokens);
+	addresses = g_strsplit(address, ", ", -1);
+	if (!g_strv_length(addresses))
 		return -EINVAL;
-	}
 
-	prefixlen = g_ascii_strtoull(tokens[1], &end, 10);
+	for (i = 0; addresses[i]; i++) {
+		DBG("address %s", addresses[i]);
 
-	if (inet_pton(AF_INET, tokens[0], buf) == 1) {
-		netmask = g_strdup_printf("%d.%d.%d.%d",
+		tokens = g_strsplit(addresses[i], "/", -1);
+		if (g_strv_length(tokens) != 2) {
+			g_strfreev(tokens);
+			return -EINVAL;
+		}
+
+		prefixlen = g_ascii_strtoull(tokens[1], &end, 10);
+
+		if (inet_pton(AF_INET, tokens[0], buf) == 1) {
+			netmask = g_strdup_printf("%d.%d.%d.%d",
 				((0xffffffff << (32 - prefixlen)) >> 24) & 0xff,
 				((0xffffffff << (32 - prefixlen)) >> 16) & 0xff,
 				((0xffffffff << (32 - prefixlen)) >> 8) & 0xff,
 				((0xffffffff << (32 - prefixlen)) >> 0) & 0xff);
 
-		*ipaddress = connman_ipaddress_alloc(AF_INET);
-		err = connman_ipaddress_set_ipv4(*ipaddress, tokens[0],
-						netmask, gateway);
-		g_free(netmask);
-	} else if (inet_pton(AF_INET6, tokens[0], buf) == 1) {
-		*ipaddress = connman_ipaddress_alloc(AF_INET6);
-		err = connman_ipaddress_set_ipv6(*ipaddress, tokens[0],
-						prefixlen, gateway);
-	} else {
-		DBG("Invalid Wireguard.Address value");
-		err = -EINVAL;
+			ipaddress = connman_ipaddress_alloc(AF_INET);
+			err = connman_ipaddress_set_ipv4(ipaddress, tokens[0],
+							netmask, gateway);
+			g_free(netmask);
+		} else if (inet_pton(AF_INET6, tokens[0], buf) == 1) {
+			ipaddress = connman_ipaddress_alloc(AF_INET6);
+			err = connman_ipaddress_set_ipv6(ipaddress, tokens[0],
+							prefixlen, gateway);
+		} else {
+			DBG("Invalid Wireguard.Address value");
+			err = -EINVAL;
+		}
+
+		connman_ipaddress_set_p2p(ipaddress, true);
+
+		g_strfreev(tokens);
+		if (err) {
+			connman_ipaddress_free(ipaddress);
+			continue;
+		}
+
+		*ipaddresses = g_slist_append(*ipaddresses, ipaddress);
 	}
 
-	connman_ipaddress_set_p2p(*ipaddress, true);
+	g_strfreev(addresses);
 
-	g_strfreev(tokens);
-	if (err)
-		connman_ipaddress_free(*ipaddress);
-
-	return err;
+	return g_slist_length(*ipaddresses) ? 0 : -EINVAL;
 }
 
 struct ifname_data {
@@ -520,12 +537,29 @@ static void run_dns_reresolve(struct wireguard_info *info)
 						wg_dns_reresolve_cb, info);
 }
 
+static void set_ipaddress(gpointer data, gpointer user_data)
+{
+	struct vpn_provider *provider = user_data;
+	struct connman_ipaddress *ipaddress = data;
+
+	DBG("provider %p ipaddress %p", provider, ipaddress);
+
+	vpn_provider_set_ipaddress(provider, ipaddress);
+}
+
+static void free_ipaddress(gpointer data)
+{
+	struct connman_ipaddress *ipaddress = data;
+
+	connman_ipaddress_free(ipaddress);
+}
+
 static int wg_connect(struct vpn_provider *provider,
 			struct connman_task *task, const char *if_name,
 			vpn_provider_connect_cb_t cb,
 			const char *dbus_sender, void *user_data)
 {
-	struct connman_ipaddress *ipaddress = NULL;
+	GSList *ipaddresses = NULL;
 	struct wireguard_info *info;
 	const char *option, *gateway;
 	char *ifname;
@@ -632,9 +666,9 @@ static int wg_connect(struct vpn_provider *provider,
 		DBG("Missing WireGuard.Address configuration");
 		goto error;
 	}
-	err = parse_address(option, gateway, &ipaddress);
+	err = parse_addresses(option, gateway, &ipaddresses);
 	if (err) {
-		DBG("Failed to parse address %s gateway %s", option, gateway);
+		DBG("Failed to parse addresses %s gateway %s", option, gateway);
 		goto error;
 	}
 
@@ -660,14 +694,14 @@ static int wg_connect(struct vpn_provider *provider,
 	}
 
 	vpn_set_ifname(provider, info->device.name);
-	if (ipaddress)
-		vpn_provider_set_ipaddress(provider, ipaddress);
+
+	g_slist_foreach(ipaddresses, set_ipaddress, provider);
 
 done:
 	if (cb)
 		cb(provider, user_data, -err);
 
-	connman_ipaddress_free(ipaddress);
+	g_slist_free_full(ipaddresses, free_ipaddress);
 
 	if (!err)
 		run_dns_reresolve(info);
