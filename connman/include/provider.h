@@ -74,6 +74,8 @@ struct connman_ipaddress;
 #define connman_provider_unref(provider) \
 	connman_provider_unref_debug(provider, __FILE__, __LINE__, __func__)
 
+#define AF_INET46 46
+
 struct connman_provider *
 connman_provider_ref_debug(struct connman_provider *provider,
 			const char *file, int line, const char *caller);

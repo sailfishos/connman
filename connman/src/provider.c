@@ -408,24 +408,50 @@ static int set_connected(struct connman_provider *provider,
 					bool connected)
 {
 	struct connman_service *service = provider->vpn_service;
-	struct connman_ipconfig *ipconfig;
+	struct connman_ipconfig *ipconfig_ipv4 = NULL;
+	struct connman_ipconfig *ipconfig_ipv6 = NULL;
 
 	DBG("provider %p", provider);
 
 	if (!service)
 		return -ENODEV;
 
-	ipconfig = __connman_service_get_ipconfig(service, provider->family);
+	switch (provider->family) {
+	case AF_INET:
+		ipconfig_ipv4 = __connman_service_get_ipconfig(service,
+								AF_INET);
+		break;
+	case AF_INET6:
+		ipconfig_ipv6 = __connman_service_get_ipconfig(service,
+								AF_INET6);
+		break;
+	case AF_INET46:
+		ipconfig_ipv4 = __connman_service_get_ipconfig(service,
+								AF_INET);
+		ipconfig_ipv6 = __connman_service_get_ipconfig(service,
+								AF_INET6);
+		break;
+	default:
+		return -EINVAL;
+	}
+	
 
 	if (connected) {
-		if (!ipconfig) {
+		if (!ipconfig_ipv4 && !ipconfig_ipv6) {
 			provider_indicate_state(provider,
 						CONNMAN_SERVICE_STATE_FAILURE);
 			return -EIO;
 		}
 
-		__connman_ipconfig_address_add(ipconfig);
-		__connman_ipconfig_gateway_add(ipconfig);
+		if (ipconfig_ipv4) {
+			__connman_ipconfig_address_add(ipconfig_ipv4);
+			__connman_ipconfig_gateway_add(ipconfig_ipv4);
+		}
+
+		if (ipconfig_ipv6) {
+			__connman_ipconfig_address_add(ipconfig_ipv6);
+			__connman_ipconfig_gateway_add(ipconfig_ipv6);
+		}
 
 		provider_indicate_state(provider,
 					CONNMAN_SERVICE_STATE_READY);
@@ -435,10 +461,16 @@ static int set_connected(struct connman_provider *provider,
 						CONNMAN_PROVIDER_ROUTE_ALL);
 
 	} else {
-		if (ipconfig) {
+		if (ipconfig_ipv4) {
 			provider_indicate_state(provider,
 					CONNMAN_SERVICE_STATE_DISCONNECT);
-			__connman_ipconfig_gateway_remove(ipconfig);
+			__connman_ipconfig_gateway_remove(ipconfig_ipv4);
+		}
+
+		if (ipconfig_ipv6) {
+			provider_indicate_state(provider,
+					CONNMAN_SERVICE_STATE_DISCONNECT);
+			__connman_ipconfig_gateway_remove(ipconfig_ipv6);
 		}
 
 		provider_indicate_state(provider,
@@ -725,7 +757,12 @@ int connman_provider_set_ipaddress(struct connman_provider *provider,
 	if (!ipconfig)
 		return -EINVAL;
 
-	provider->family = ipaddress->family;
+	if ((provider->family == AF_INET && ipaddress->family == AF_INET6) ||
+				(provider->family == AF_INET6 &&
+					ipaddress->family == AF_INET))
+		provider->family = AF_INET46;
+	else if (provider->family != AF_INET46)
+		provider->family = ipaddress->family;
 
 	__connman_ipconfig_set_method(ipconfig, CONNMAN_IPCONFIG_METHOD_FIXED);
 
@@ -837,6 +874,7 @@ int connman_provider_set_split_routing(struct connman_provider *provider,
 	case AF_INET6:
 		type = CONNMAN_IPCONFIG_TYPE_IPV6;
 		break;
+	case AF_INET46:
 	case AF_UNSPEC:
 		type = CONNMAN_IPCONFIG_TYPE_ALL;
 		break;
