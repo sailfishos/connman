@@ -1625,7 +1625,7 @@ static void free_network_route(struct vpn_route *rt)
 static int add_network_route(struct connection_data *data)
 {
 	struct vpn_route rt = { 0, };
-	int err;
+	int err = 0;
 
 	if (!data)
 		return -EINVAL;
@@ -1635,7 +1635,11 @@ static int add_network_route(struct connection_data *data)
 		err = connman_inet_get_route_addresses(data->index,
 					&rt.network, &rt.netmask,
 					&rt.gateway);
-		if (!err)
+		if (err)
+			connman_error("cannot get IPv4 network/gateway/netmask "
+						"for %p/%s", data->provider,
+						data->ident);
+		else
 			err = set_network_route(data, &rt);
 
 		free_network_route(&rt);
@@ -1647,18 +1651,20 @@ static int add_network_route(struct connection_data *data)
 					&rt.network, &rt.netmask,
 					&rt.gateway);
 		if (err)
+			connman_error("cannot get IPv6 network/gateway/netmask "
+						"for %p/%s", data->provider,
+						data->ident);
+		else
 			err = set_network_route(data, &rt);
 
 		free_network_route(&rt);
 	}
 
-	if (err) {
-		connman_error("cannot get/set network/gateway/netmask for %p",
-							data->provider);
-		return err;
-	}
+	if (err)
+		connman_error("cannot set network route for %p/%s",
+						data->provider, data->ident);
 
-	return 0;
+	return err;
 }
 
 static bool is_valid_route_table(struct connman_provider *provider,
