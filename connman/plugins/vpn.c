@@ -1595,7 +1595,7 @@ static int set_network_route(struct connection_data *data, struct vpn_route *rt)
 {
 	int err;
 
-	if (!data|| !rt)
+	if (!data || !rt)
 		return -EINVAL;
 
 	DBG("network %s gateway %s netmask %s for provider %p",
@@ -1615,6 +1615,13 @@ static int set_network_route(struct connection_data *data, struct vpn_route *rt)
 	return 0;
 }
 
+static void free_network_route(struct vpn_route *rt)
+{
+	g_free(rt->network);
+	g_free(rt->netmask);
+	g_free(rt->gateway);
+}
+
 static int add_network_route(struct connection_data *data)
 {
 	struct vpn_route rt = { 0, };
@@ -1623,56 +1630,27 @@ static int add_network_route(struct connection_data *data)
 	if (!data)
 		return -EINVAL;
 
-	rt.family = connman_provider_get_family(data->provider);
-	switch (rt.family) {
-	case AF_INET:
-		err = connman_inet_get_route_addresses(data->index,
-					&rt.network, &rt.netmask,
-					&rt.gateway);
-		if (err)
-			break;
-
-		err = set_network_route(data, &rt);
-
-		break;
-	case AF_INET6:
-		err = connman_inet_ipv6_get_route_addresses(data->index,
-					&rt.network, &rt.netmask,
-					&rt.gateway);
-		if (err)
-			break;
-
-		err = set_network_route(data, &rt);
-		break;
-	case AF_INET46:
+	if (connman_provider_get_family(data->provider, AF_INET)) {
+		rt.family = AF_INET;
 		err = connman_inet_get_route_addresses(data->index,
 					&rt.network, &rt.netmask,
 					&rt.gateway);
 		if (!err)
 			err = set_network_route(data, &rt);
 
-		if (err)
-			DBG("Cannot set IPv4 route for dual mode, try IPv6");
-
-		g_free(rt.network);
-		g_free(rt.netmask);
-		g_free(rt.gateway);
-
-		err = connman_inet_ipv6_get_route_addresses(data->index,
-					&rt.network, &rt.netmask,
-					&rt.gateway);
-		if (!err)
-			err = set_network_route(data, &rt);
-
-		break;
-	default:
-		connman_error("invalid protocol family %d", rt.family);
-		return -EINVAL;
+		free_network_route(&rt);
 	}
 
-	g_free(rt.network);
-	g_free(rt.netmask);
-	g_free(rt.gateway);
+	if (connman_provider_get_family(data->provider, AF_INET6)) {
+		rt.family = AF_INET6;
+		err = connman_inet_ipv6_get_route_addresses(data->index,
+					&rt.network, &rt.netmask,
+					&rt.gateway);
+		if (err)
+			err = set_network_route(data, &rt);
+
+		free_network_route(&rt);
+	}
 
 	if (err) {
 		connman_error("cannot get/set network/gateway/netmask for %p",
@@ -1748,7 +1726,7 @@ static bool check_routes(struct connman_provider *provider)
 static void set_default_route(struct connection_data *data, int family,
 							char *ipaddr_any)
 {
-	struct vpn_route def_route = {family, ipaddr_any, ipaddr_any,NULL};
+	struct vpn_route def_route = {family, ipaddr_any, ipaddr_any, NULL};
 
 	set_route(data, &def_route);
 }
@@ -1785,21 +1763,10 @@ static int set_routes(struct connman_provider *provider,
 	/* If non-split routed VPN does not have a default route, add it */
 	if (!connman_provider_is_split_routing(provider) &&
 						!data->default_route_set) {
-		int family = connman_provider_get_family(provider);
-		switch (family) {
-		case AF_INET:
+		if (connman_provider_get_family(provider, AF_INET))
 			set_default_route(data, AF_INET, "0.0.0.0");
-			break;
-		case AF_INET6:
+		if (connman_provider_get_family(provider, AF_INET6))
 			set_default_route(data, AF_INET6, "::");
-			break;
-		case AF_INET46:
-			set_default_route(data, AF_INET, "0.0.0.0");
-			set_default_route(data, AF_INET6, "::");
-			break;
-		default:
-			break;
-		}
 	}
 
 	/* Split routed VPN must have at least one route to the network */
