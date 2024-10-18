@@ -31,6 +31,7 @@
 #include <gweb/gresolv.h>
 
 #include "connman.h"
+#include "src/shared/util.h"
 
 static DBusConnection *connection = NULL;
 
@@ -44,11 +45,35 @@ struct connman_provider {
 	struct connman_service *vpn_service;
 	int index;
 	char *identifier;
-	int family;
+	bool family[2];
 	struct connman_provider_driver *driver;
 	void *driver_data;
 	bool ipv6_data_leak_prevention;
 };
+
+static void provider_set_family(struct connman_provider *provider, int family)
+{
+	if (!provider)
+		return;
+
+	util_set_afs(provider->family, family);
+}
+
+static bool provider_get_family(struct connman_provider *provider, int family)
+{
+	if (!provider)
+		return false;
+
+	return util_get_afs(provider->family, family);
+}
+
+static void provider_reset_family(struct connman_provider *provider)
+{
+	if (!provider)
+		return;
+
+	util_reset_afs(provider->family);
+}
 
 void __connman_provider_append_properties(struct connman_provider *provider,
 							DBusMessageIter *iter)
@@ -328,6 +353,8 @@ int connman_provider_disconnect(struct connman_provider *provider)
 		provider_indicate_state(provider,
 					CONNMAN_SERVICE_STATE_IDLE);
 
+	provider_reset_family(provider);
+
 	return 0;
 }
 
@@ -416,25 +443,13 @@ static int set_connected(struct connman_provider *provider,
 	if (!service)
 		return -ENODEV;
 
-	switch (provider->family) {
-	case AF_INET:
+	if (provider_get_family(provider, AF_INET))
 		ipconfig_ipv4 = __connman_service_get_ipconfig(service,
 								AF_INET);
-		break;
-	case AF_INET6:
+
+	if (provider_get_family(provider, AF_INET6))
 		ipconfig_ipv6 = __connman_service_get_ipconfig(service,
 								AF_INET6);
-		break;
-	case AF_INET46:
-		ipconfig_ipv4 = __connman_service_get_ipconfig(service,
-								AF_INET);
-		ipconfig_ipv6 = __connman_service_get_ipconfig(service,
-								AF_INET6);
-		break;
-	default:
-		return -EINVAL;
-	}
-	
 
 	if (connected) {
 		if (!ipconfig_ipv4 && !ipconfig_ipv6) {
@@ -757,12 +772,7 @@ int connman_provider_set_ipaddress(struct connman_provider *provider,
 	if (!ipconfig)
 		return -EINVAL;
 
-	if ((provider->family == AF_INET && ipaddress->family == AF_INET6) ||
-				(provider->family == AF_INET6 &&
-					ipaddress->family == AF_INET))
-		provider->family = AF_INET46;
-	else if (provider->family != AF_INET46)
-		provider->family = ipaddress->family;
+	provider_set_family(provider, ipaddress->family);
 
 	__connman_ipconfig_set_method(ipconfig, CONNMAN_IPCONFIG_METHOD_FIXED);
 
@@ -867,20 +877,15 @@ int connman_provider_set_split_routing(struct connman_provider *provider,
 		return -EALREADY;
 	}
 
-	switch (provider->family) {
-	case AF_INET:
-		type = CONNMAN_IPCONFIG_TYPE_IPV4;
-		break;
-	case AF_INET6:
-		type = CONNMAN_IPCONFIG_TYPE_IPV6;
-		break;
-	case AF_INET46:
-	case AF_UNSPEC:
+	if (provider_get_family(provider, AF_INET) &&
+				provider_get_family(provider, AF_INET6))
 		type = CONNMAN_IPCONFIG_TYPE_ALL;
-		break;
-	default:
+	else if (provider_get_family(provider, AF_INET))
+		type = CONNMAN_IPCONFIG_TYPE_IPV4;
+	else if (provider_get_family(provider, AF_INET6))
+		type = CONNMAN_IPCONFIG_TYPE_IPV6;
+	else
 		type = CONNMAN_IPCONFIG_TYPE_UNKNOWN;
-	}
 
 	if (!__connman_service_is_connected_state(provider->vpn_service,
 								type)) {
@@ -922,12 +927,9 @@ out:
 	return err;
 }
 
-int connman_provider_get_family(struct connman_provider *provider)
+bool connman_provider_get_family(struct connman_provider *provider, int family)
 {
-	if (!provider)
-		return AF_UNSPEC;
-
-	return provider->family;
+	return provider_get_family(provider, family);
 }
 
 void connman_provider_set_ipv6_data_leak_prevention(

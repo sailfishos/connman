@@ -74,8 +74,6 @@ struct connman_ipaddress;
 #define connman_provider_unref(provider) \
 	connman_provider_unref_debug(provider, __FILE__, __LINE__, __func__)
 
-#define AF_INET46 46
-
 struct connman_provider *
 connman_provider_ref_debug(struct connman_provider *provider,
 			const char *file, int line, const char *caller);
@@ -120,7 +118,7 @@ void connman_provider_set_autoconnect(struct connman_provider *provider,
 bool connman_provider_is_split_routing(struct connman_provider *provider);
 int connman_provider_set_split_routing(struct connman_provider *provider,
 							bool split_routing);
-int connman_provider_get_family(struct connman_provider *provider);
+bool connman_provider_get_family(struct connman_provider *provider, int family);
 void connman_provider_set_ipv6_data_leak_prevention(
 					struct connman_provider *provider,
 					bool enable);
