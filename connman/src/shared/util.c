@@ -31,6 +31,8 @@
 
 #include "src/shared/util.h"
 
+#define ARRAY_SIZE(a) (sizeof(a)/sizeof(a[0]))
+
 void util_debug(util_debug_func_t function, void *user_data,
 						const char *format, ...)
 {
@@ -126,4 +128,44 @@ char *util_timeval_to_iso8601(struct timeval *time)
 		return NULL;
 
 	return g_strdup(buf);
+}
+
+void util_set_afs(bool *afs, int family)
+{
+	if (!afs)
+		return;
+
+	switch (family) {
+	case AF_INET:
+		afs[AF_INET_POS] = true;
+		break;
+	case AF_INET6:
+		afs[AF_INET6_POS] = true;
+		break;
+	default:
+		break;
+	}
+}
+
+bool util_get_afs(bool *afs, int family)
+{
+	if (!afs)
+		return false;
+
+	switch (family) {
+	case AF_INET:
+		return afs[AF_INET_POS];
+	case AF_INET6:
+		return afs[AF_INET6_POS];
+	default:
+		return false;
+	}
+}
+
+void util_reset_afs(bool *afs)
+{
+	if (!afs)
+		return;
+
+	afs[AF_INET_POS] = afs[AF_INET6_POS] = false;
 }
