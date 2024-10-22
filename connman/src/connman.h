@@ -225,6 +225,9 @@ struct __connman_inet_rtnl_handle {
 			struct {
 				struct ifaddrmsg ifa;
 			} i;
+			struct {
+				struct ifinfomsg ifi;
+			} f;
 		} u;
 		char buf[1024];
 	} req;
