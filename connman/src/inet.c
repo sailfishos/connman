@@ -92,7 +92,7 @@ int __connman_inet_modify_address(int cmd, int flags,
 	struct nlmsghdr *header;
 	struct sockaddr_nl nl_addr;
 	struct ifaddrmsg *ifaddrmsg;
-	struct in6_addr ipv6_addr;
+	struct in6_addr ipv6_addr, ipv6_dest;
 	struct in_addr ipv4_addr, ipv4_dest, ipv4_bcast;
 	int sk, err;
 
@@ -167,6 +167,19 @@ int __connman_inet_modify_address(int cmd, int flags,
 				return err;
 		}
 	} else if (family == AF_INET6) {
+		if (peer) {
+			if (inet_pton(AF_INET6, peer, &ipv6_dest) != 1)
+				return -1;
+
+			err = __connman_inet_rtnl_addattr_l(header,
+							sizeof(request),
+							IFA_ADDRESS,
+							&ipv6_dest,
+							sizeof(ipv6_dest));
+			if (err < 0)
+				return err;
+		}
+
 		if (inet_pton(AF_INET6, address, &ipv6_addr) != 1)
 			return -1;
 
@@ -453,6 +466,7 @@ int connman_inet_set_ipv6_address(int index,
 	int err;
 	unsigned char prefix_len;
 	const char *address;
+	const char *peer;
 	bool is_p2p;
 
 	if (!ipaddress->local)
@@ -460,13 +474,14 @@ int connman_inet_set_ipv6_address(int index,
 
 	prefix_len = ipaddress->prefixlen;
 	address = ipaddress->local;
+	peer = ipaddress->peer;
 	is_p2p = ipaddress->is_p2p;
 
 	DBG("index %d address %s prefix_len %d", index, address, prefix_len);
 
 	err = __connman_inet_modify_address(RTM_NEWADDR,
 				NLM_F_REPLACE | NLM_F_ACK, index, AF_INET6,
-				address, NULL, prefix_len, NULL, is_p2p);
+				address, peer, prefix_len, NULL, is_p2p);
 	if (err < 0) {
 		connman_error("%s: %s", __func__, strerror(-err));
 		return err;
