@@ -3817,3 +3817,163 @@ int __connman_inet_del_ipv6_neigbour_proxy(int index, const char *ipv6_address,
 
 	return ipv6_neigbour_proxy(index, false, ipv6_address, ipv6_prefixlen);
 }
+
+#include <libnetfilter_conntrack/libnetfilter_conntrack.h>
+
+struct nfct_cb_data {
+	struct nfct_handle *handle;
+	enum connman_ipconfig_type type;
+	struct in_addr exclude_ipv4;
+	struct in6_addr exclude_ipv6;
+};
+
+int delete_connection(enum nf_conntrack_msg_type type,
+				struct nf_conntrack *ct, void *user_data)
+{
+	struct nfct_cb_data *cb_data = (struct nfct_cb_data*)user_data;
+	struct in_addr addr_ipv4;
+	struct in6_addr *addr_ipv6;
+
+	switch (nfct_get_attr_u8(ct, ATTR_ORIG_L3PROTO)) {
+	case AF_INET:
+		if (cb_data->type == CONNMAN_IPCONFIG_TYPE_IPV6)
+			return NFCT_CB_CONTINUE;
+
+		addr_ipv4.s_addr = nfct_get_attr_u32(ct, ATTR_IPV4_SRC);
+		if (cb_data->exclude_ipv4.s_addr == addr_ipv4.s_addr) {
+			DBG("excluded address detected");
+			return NFCT_CB_CONTINUE;
+		}
+
+		break;
+	case AF_INET6:
+		if (cb_data->type == CONNMAN_IPCONFIG_TYPE_IPV4)
+			return NFCT_CB_CONTINUE;
+
+		addr_ipv6 = (struct in6_addr*)nfct_get_attr(ct, ATTR_IPV6_SRC);
+		if (!memcmp(cb_data->exclude_ipv6.s6_addr, addr_ipv6->s6_addr,
+						sizeof(addr_ipv6->s6_addr))) {
+			DBG("excluded IPv6 address detected");
+			return NFCT_CB_CONTINUE;
+		}
+
+		break;
+	default:
+		return NFCT_CB_CONTINUE;
+	}
+
+	if (nfct_query(cb_data->handle, NFCT_Q_DESTROY, ct) < 0) {
+		connman_error("Error deleting the connection");
+		return NFCT_CB_STOP;
+	}
+
+	DBG("Connection deleted");
+
+	return NFCT_CB_CONTINUE;
+}
+
+int get_in_addr(int family, struct connman_ipaddress *ipaddress,
+						struct nfct_cb_data *data)
+{
+	/* No ipaddress = valid case here -> bail out silently */
+	if (!ipaddress)
+		return 0;
+
+	if (!ipaddress->local) {
+		DBG("No local IP address set");
+		return -ENOENT;
+	}
+
+	switch (family) {
+	case AF_INET:
+		if (inet_pton(family, ipaddress->local, &data->exclude_ipv4)
+									!= 1)
+			return -EINVAL;
+
+		break;
+	case AF_INET6:
+		if (inet_pton(family, ipaddress->local, &data->exclude_ipv6)
+									!= 1)
+			return -EINVAL;
+
+		break;
+	default:
+		return -EAFNOSUPPORT;
+	}
+
+	return 0;
+}
+
+int connman_inet_cleanup_existing_connections(enum connman_ipconfig_type type,
+					struct connman_ipaddress *ipaddress4,
+					struct connman_ipaddress *ipaddress6)
+{
+	struct nfct_handle *handle;
+	struct nf_conntrack *ct;
+	struct nfct_cb_data cb_data = { 0 };
+	int err = 0;
+
+	ct = nfct_new();
+	if (!ct)
+		return -ENOMEM;
+
+	/* Open a connection tracking handle */
+	handle = nfct_open(CONNTRACK, NF_NETLINK_CONNTRACK_DESTROY);
+	if (!handle) {
+		connman_error("Error opening connection tracking handle");
+		nfct_destroy(ct);
+		return -ENOENT;
+	}
+
+	cb_data.handle = handle;
+
+	if (get_in_addr(AF_INET, ipaddress4, &cb_data))
+		DBG("failed to set IPv4 exclude");
+
+	if (get_in_addr(AF_INET6, ipaddress6, &cb_data))
+		DBG("failed to set IPv6 exclude");
+
+	switch (type) {
+	case CONNMAN_IPCONFIG_TYPE_IPV4:
+		nfct_set_attr_u8(ct, ATTR_L3PROTO, AF_INET);
+		break;
+	case CONNMAN_IPCONFIG_TYPE_IPV6:
+		nfct_set_attr_u8(ct, ATTR_L3PROTO, AF_INET6);
+		break;
+	case CONNMAN_IPCONFIG_TYPE_ALL:
+		/* TODO: none set = all?
+		nfct_set_attr_u8(ct, ATTR_L3PROTO, AF_INET4);
+		nfct_set_attr_u8(ct, ATTR_L3PROTO, AF_INET6);
+		*/
+		break;
+	default:
+		err = -EINVAL;
+		goto out;
+	}
+
+	cb_data.type = type;
+
+	/* Register the filter */
+	if (nfct_callback_register(handle, NFCT_T_ALL, delete_connection,
+								&cb_data) < 0) {
+		connman_error("Error registering netfilter callback");
+		err = -EINVAL;
+		goto out;
+	}
+
+	/* Dump the connection tracking table */
+	if (nfct_query(handle, NFCT_Q_DUMP, ct) < 0) {
+		connman_error("Error querying connection tracking table");
+		err = -ENODATA;
+		goto out;
+	}
+
+	DBG("Connections reset successfully.");
+
+out:
+	nfct_destroy(ct);
+	nfct_callback_unregister(handle);
+	nfct_close(handle);
+
+	return err;
+}

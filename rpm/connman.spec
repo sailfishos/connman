@@ -21,6 +21,7 @@ Requires:   libdbusaccess >= 1.0.2
 Requires:   libgsupplicant >= 1.0.17
 Requires:   glib2 >= 2.62
 Requires:   tayga >= 0.9.2
+Requires:   libnetfilter_conntrack >= 1.1.0
 Requires(preun): systemd
 Requires(post): systemd
 Requires(postun): systemd
@@ -50,6 +51,7 @@ BuildRequires:  usb-moded-devel >= 0.86.0+mer31
 BuildRequires:  libglibutil-devel
 BuildRequires:  libdbusaccess-devel
 BuildRequires:  libmnl-devel
+BuildRequires:  libnetfilter_conntrack-devel
 
 %description
 Connection Manager provides a daemon for managing Internet connections

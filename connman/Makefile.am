@@ -161,7 +161,8 @@ endif
 src_connmand_LDADD = gdbus/libgdbus-internal.la $(builtin_libadd) \
 			@GIO_LIBS@ @GOBJECT_LIBS@ @GLIB_LIBS@ @DBUS_LIBS@ \
 			@GNUTLS_LIBS@ @IPHB_LIBS@ @LIBIPTC_LIBS@ \
-			@DBUSACCESS_LIBS@ -lresolv -ldl -lrt
+			@DBUSACCESS_LIBS@ -lresolv -ldl -lrt \
+			-lnetfilter_conntrack
 
 src_connmand_LDFLAGS = -Wl,--export-dynamic \
 				-Wl,--version-script=$(srcdir)/src/connman.ver
@@ -221,7 +222,7 @@ vpn_connman_vpnd_SOURCES = $(builtin_vpn_sources) $(backtrace_sources) \
 
 vpn_connman_vpnd_LDADD = gdbus/libgdbus-internal.la $(builtin_vpn_libadd) \
 				@GLIB_LIBS@ @DBUS_LIBS@ @GNUTLS_LIBS@ @DBUSACCESS_LIBS@ \
-				-lresolv -ldl
+				-lresolv -ldl -lnetfilter_conntrack
 
 vpn_connman_vpnd_LDFLAGS = -Wl,--export-dynamic \
 				-Wl,--version-script=$(srcdir)/vpn/vpn.ver
