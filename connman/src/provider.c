@@ -479,6 +479,11 @@ static int set_connected(struct connman_provider *provider,
 					provider->driver->get_property(
 						provider, "HostIP"));
 
+		if (!ipconfig_ipv6 && !__connman_service_is_split_routing(
+							provider->vpn_service))
+			connman_inet_cleanup_existing_connections(
+						CONNMAN_IPCONFIG_TYPE_IPV6,
+						NULL, NULL);
 	} else {
 		if (ipconfig_ipv4) {
 			provider_indicate_state(provider,
@@ -921,6 +926,11 @@ int connman_provider_set_split_routing(struct connman_provider *provider,
 		__connman_service_split_routing_changed(provider->vpn_service);
 		goto out;
 	}
+
+	/* The VPN is used as default route with only IPv4 -> cut IPv6 */
+	if (!split_routing && type == CONNMAN_IPCONFIG_TYPE_IPV4)
+		connman_inet_cleanup_existing_connections(
+					CONNMAN_IPCONFIG_TYPE_IPV6, NULL, NULL);
 
 save:
 	__connman_service_set_split_routing(provider->vpn_service,
