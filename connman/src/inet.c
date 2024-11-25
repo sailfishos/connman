@@ -3825,14 +3825,83 @@ struct nfct_cb_data {
 	enum connman_ipconfig_type type;
 	struct in_addr exclude_ipv4;
 	struct in6_addr exclude_ipv6;
+	int counter;
 };
+
+static void print_connection(struct nf_conntrack *ct, int counter)
+{
+	static struct connman_debug_desc debug_desc CONNMAN_DEBUG_ATTR = {
+		.file = __FILE__,
+		.flags = CONNMAN_DEBUG_FLAG_DEFAULT
+	};
+
+	if (!ct)
+		return;
+
+	if (debug_desc.flags && CONNMAN_DEBUG_FLAG_PRINT) {
+		struct in_addr src_ipv4;
+		struct in_addr dst_ipv4;
+		struct in6_addr src_ipv6;
+		struct in6_addr dst_ipv6;
+		const void *s6_src_addr;
+		const void *s6_dst_addr;
+
+		uint8_t family = nfct_get_attr_u8(ct, ATTR_ORIG_L3PROTO);
+		uint16_t src_port;
+		uint16_t dst_port;
+		char src_buf[INET6_ADDRSTRLEN] = { 0 };
+		char dst_buf[INET6_ADDRSTRLEN] = { 0 };
+
+		switch (family) {
+		case AF_INET:
+			src_ipv4.s_addr = nfct_get_attr_u32(ct, ATTR_IPV4_SRC);
+			dst_ipv4.s_addr = nfct_get_attr_u32(ct, ATTR_IPV4_SRC);
+			src_port = nfct_get_attr_u16(ct, ATTR_PORT_SRC);
+			dst_port = nfct_get_attr_u16(ct, ATTR_PORT_DST);
+
+			DBG("#%d IPv4 %s:%u -> %s:%u", counter,
+					inet_ntop(AF_INET, &src_ipv4, src_buf,
+							INET6_ADDRSTRLEN),
+					ntohs(src_port),
+					inet_ntop(AF_INET, &dst_ipv4,dst_buf,
+							INET6_ADDRSTRLEN),
+					ntohs(dst_port));
+			break;
+		case AF_INET6:
+			s6_src_addr = nfct_get_attr(ct, ATTR_IPV6_SRC);
+			s6_dst_addr = nfct_get_attr(ct,	ATTR_IPV6_DST);
+			memcpy(&src_ipv6.s6_addr, s6_src_addr,
+						sizeof(struct in6_addr));
+			memcpy(&dst_ipv6.s6_addr, s6_dst_addr, 
+						sizeof(struct in6_addr));
+			src_port = nfct_get_attr_u16(ct, ATTR_PORT_SRC);
+			dst_port = nfct_get_attr_u16(ct, ATTR_PORT_DST);
+
+			DBG("#%d IPv6 %s:%u -> %s:%u", counter,
+					inet_ntop(AF_INET6, &src_ipv6, src_buf,
+							INET6_ADDRSTRLEN),
+					ntohs(src_port),
+					inet_ntop(AF_INET6, &dst_ipv6, dst_buf,
+							INET6_ADDRSTRLEN),
+					ntohs(dst_port));
+			break;
+		default:
+			DBG("#%d non IPv4/6", counter);
+			break;
+		}
+	}
+}
 
 int delete_connection(enum nf_conntrack_msg_type type,
 				struct nf_conntrack *ct, void *user_data)
 {
 	struct nfct_cb_data *cb_data = (struct nfct_cb_data*)user_data;
 	struct in_addr addr_ipv4;
-	struct in6_addr *addr_ipv6;
+	struct in6_addr addr_ipv6;
+	const void* s6_dst_addr;
+	cb_data->counter++;
+
+	print_connection(ct, cb_data->counter);
 
 	switch (nfct_get_attr_u8(ct, ATTR_ORIG_L3PROTO)) {
 	case AF_INET:
@@ -3850,26 +3919,30 @@ int delete_connection(enum nf_conntrack_msg_type type,
 		if (cb_data->type == CONNMAN_IPCONFIG_TYPE_IPV4)
 			return NFCT_CB_CONTINUE;
 
-		addr_ipv6 = (struct in6_addr*)nfct_get_attr(ct, ATTR_IPV6_SRC);
-		if (!memcmp(cb_data->exclude_ipv6.s6_addr, addr_ipv6->s6_addr,
-						sizeof(addr_ipv6->s6_addr))) {
+		s6_dst_addr = nfct_get_attr(ct, ATTR_IPV6_SRC);
+		memcpy(&addr_ipv6.s6_addr, s6_dst_addr,
+						sizeof(struct in6_addr));
+		if (!memcmp(cb_data->exclude_ipv6.s6_addr, addr_ipv6.s6_addr,
+						sizeof(addr_ipv6.s6_addr))) {
 			DBG("excluded IPv6 address detected");
 			return NFCT_CB_CONTINUE;
 		}
 
 		break;
 	default:
+		DBG("Unknown family for #%d", cb_data->counter);
 		return NFCT_CB_CONTINUE;
 	}
 
-	if (nfct_query(cb_data->handle, NFCT_Q_DESTROY, ct) < 0) {
-		connman_error("Error deleting the connection");
-		return NFCT_CB_STOP;
+	if (nfct_query(cb_data->handle, NFCT_Q_DESTROY, ct)) {
+		connman_error("Error deleting the connection: %s",
+							strerror(errno));
+		return NFCT_CB_CONTINUE;
 	}
 
-	DBG("Connection deleted");
+	DBG("Connection #%d deleted", cb_data->counter);
 
-	return NFCT_CB_CONTINUE;
+	return NFCT_CB_STOLEN;
 }
 
 int get_in_addr(int family, struct connman_ipaddress *ipaddress,
@@ -3913,12 +3986,14 @@ int connman_inet_cleanup_existing_connections(enum connman_ipconfig_type type,
 	struct nfct_cb_data cb_data = { 0 };
 	int err = 0;
 
+	DBG("type %d", type);
+
 	ct = nfct_new();
 	if (!ct)
 		return -ENOMEM;
 
 	/* Open a connection tracking handle */
-	handle = nfct_open(CONNTRACK, NF_NETLINK_CONNTRACK_DESTROY);
+	handle = nfct_open(NFNL_SUBSYS_CTNETLINK, 0);
 	if (!handle) {
 		connman_error("Error opening connection tracking handle");
 		nfct_destroy(ct);
@@ -3936,9 +4011,11 @@ int connman_inet_cleanup_existing_connections(enum connman_ipconfig_type type,
 	switch (type) {
 	case CONNMAN_IPCONFIG_TYPE_IPV4:
 		nfct_set_attr_u8(ct, ATTR_L3PROTO, AF_INET);
+		nfct_set_attr_u8(ct, ATTR_REPL_L3PROTO, AF_INET);
 		break;
 	case CONNMAN_IPCONFIG_TYPE_IPV6:
 		nfct_set_attr_u8(ct, ATTR_L3PROTO, AF_INET6);
+		nfct_set_attr_u8(ct, ATTR_REPL_L3PROTO, AF_INET6);
 		break;
 	case CONNMAN_IPCONFIG_TYPE_ALL:
 		/* TODO: none set = all?
@@ -3955,15 +4032,16 @@ int connman_inet_cleanup_existing_connections(enum connman_ipconfig_type type,
 
 	/* Register the filter */
 	if (nfct_callback_register(handle, NFCT_T_ALL, delete_connection,
-								&cb_data) < 0) {
+								&cb_data)) {
 		connman_error("Error registering netfilter callback");
 		err = -EINVAL;
 		goto out;
 	}
 
 	/* Dump the connection tracking table */
-	if (nfct_query(handle, NFCT_Q_DUMP, ct) < 0) {
-		connman_error("Error querying connection tracking table");
+	if (nfct_query(handle, NFCT_Q_DUMP_FILTER, ct)) {
+		connman_error("Error querying connection tracking table %s",
+							strerror(errno));
 		err = -ENODATA;
 		goto out;
 	}
@@ -3971,9 +4049,9 @@ int connman_inet_cleanup_existing_connections(enum connman_ipconfig_type type,
 	DBG("Connections reset successfully.");
 
 out:
-	nfct_destroy(ct);
 	nfct_callback_unregister(handle);
 	nfct_close(handle);
+	nfct_destroy(ct);
 
 	return err;
 }
