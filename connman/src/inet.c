@@ -3942,7 +3942,7 @@ int delete_connection(enum nf_conntrack_msg_type type,
 
 	DBG("Connection #%d deleted", cb_data->counter);
 
-	return NFCT_CB_STOLEN;
+	return NFCT_CB_CONTINUE;
 }
 
 int get_in_addr(int family, struct connman_ipaddress *ipaddress,
@@ -3993,7 +3993,7 @@ int connman_inet_cleanup_existing_connections(enum connman_ipconfig_type type,
 		return -ENOMEM;
 
 	/* Open a connection tracking handle */
-	handle = nfct_open(NFNL_SUBSYS_CTNETLINK, 0);
+	handle = nfct_open(CONNTRACK, 0);
 	if (!handle) {
 		connman_error("Error opening connection tracking handle");
 		nfct_destroy(ct);
