@@ -92,6 +92,7 @@ static struct strvalmap keymgmt_map[] = {
 	{ "wpa-eap",		G_SUPPLICANT_KEYMGMT_WPA_EAP	},
 	{ "wpa-eap-sha256",	G_SUPPLICANT_KEYMGMT_WPA_EAP_256	},
 	{ "wps",		G_SUPPLICANT_KEYMGMT_WPS		},
+	{ "sae",		G_SUPPLICANT_KEYMGMT_SAE		},
 	{ }
 };
 
@@ -234,6 +235,7 @@ struct _GSupplicantNetwork {
 	unsigned int wps_capabilities;
 	GHashTable *bss_table;
 	GHashTable *config_table;
+	unsigned int keymgmt;
 };
 
 struct _GSupplicantPeer {
@@ -806,6 +808,33 @@ static void remove_peer(gpointer data)
 	g_free(peer->widi_ies);
 
 	g_free(peer);
+}
+
+static void remove_ssid(gpointer data)
+{
+	GSupplicantSSID *ssid = data;
+
+	if (!ssid)
+		return;
+
+	g_free((void *) ssid->ssid);
+	g_free((char *) ssid->eap);
+	g_free((char *) ssid->passphrase);
+	g_free((char *) ssid->identity);
+	g_free((char *) ssid->anonymous_identity);
+	g_free((char *) ssid->ca_cert_path);
+	g_free((char *) ssid->subject_match);
+	g_free((char *) ssid->altsubject_match);
+	g_free((char *) ssid->domain_suffix_match);
+	g_free((char *) ssid->domain_match);
+	g_free((char *) ssid->client_cert_path);
+	g_free((char *) ssid->private_key_path);
+	g_free((char *) ssid->private_key_passphrase);
+	g_free((char *) ssid->phase2_auth);
+	g_free((char *) ssid->pin_wps);
+	g_free((char *) ssid->bgscan);
+
+	g_free(ssid);
 }
 
 static void debug_strvalmap(const char *label, struct strvalmap *map,
@@ -1427,6 +1456,14 @@ bool g_supplicant_peer_has_requested_connection(GSupplicantPeer *peer)
 	return peer->connection_requested;
 }
 
+unsigned int g_supplicant_network_get_keymgmt(GSupplicantNetwork *network)
+{
+	if (!network)
+		return 0;
+
+	return network->keymgmt;
+}
+
 static void merge_network(GSupplicantNetwork *network)
 {
 	GString *str;
@@ -1457,7 +1494,8 @@ static void merge_network(GSupplicantNetwork *network)
 	else if (g_strcmp0(mode, "1") == 0)
 		g_string_append_printf(str, "_adhoc");
 
-	if (g_strcmp0(key_mgmt, "WPA-PSK") == 0)
+	if ((g_strcmp0(key_mgmt, "WPA-PSK") == 0) ||
+	    (g_strcmp0(key_mgmt, "SAE") == 0))
 		g_string_append_printf(str, "_psk");
 
 	group = g_string_free(str, FALSE);
@@ -1650,6 +1688,7 @@ static int add_or_replace_bss_to_network(struct g_supplicant_bss *bss)
 	network->name = create_name(bss->ssid, bss->ssid_len);
 	network->mode = bss->mode;
 	network->security = bss->security;
+	network->keymgmt = bss->keymgmt;
 	network->ssid_len = bss->ssid_len;
 	memcpy(network->ssid, bss->ssid, bss->ssid_len);
 	network->signal = bss->signal;
@@ -1931,7 +1970,8 @@ static void bss_compute_security(struct g_supplicant_bss *bss)
 	if (bss->keymgmt &
 			(G_SUPPLICANT_KEYMGMT_WPA_PSK |
 				G_SUPPLICANT_KEYMGMT_WPA_FT_PSK |
-				G_SUPPLICANT_KEYMGMT_WPA_PSK_256))
+				G_SUPPLICANT_KEYMGMT_WPA_PSK_256 |
+				G_SUPPLICANT_KEYMGMT_SAE))
 		bss->psk = TRUE;
 
 	if (bss->ieee8021x)
@@ -4138,6 +4178,7 @@ done:
 	if (data->callback)
 		data->callback(err, NULL, data->user_data);
 
+	remove_ssid(data->ssid);
 	dbus_free(data);
 }
 
@@ -4456,7 +4497,7 @@ static void interface_select_network_result(const char *error,
 	if (data->callback)
 		data->callback(err, data->interface, data->user_data);
 
-	g_free(data->ssid);
+	remove_ssid(data->ssid);
 	dbus_free(data);
 }
 
@@ -4512,7 +4553,7 @@ error:
 	}
 
 	g_free(data->path);
-	g_free(data->ssid);
+	remove_ssid(data->ssid);
 	g_free(data);
 }
 
@@ -4775,6 +4816,26 @@ static void add_network_security_eap(DBusMessageIter *dict,
 						     DBUS_TYPE_STRING,
 						     &ssid->anonymous_identity);
 
+	if(ssid->subject_match)
+		supplicant_dbus_dict_append_basic(dict, "subject_match",
+						     DBUS_TYPE_STRING,
+						     &ssid->subject_match);
+
+	if(ssid->altsubject_match)
+		supplicant_dbus_dict_append_basic(dict, "altsubject_match",
+						     DBUS_TYPE_STRING,
+						     &ssid->altsubject_match);
+
+	if(ssid->domain_suffix_match)
+		supplicant_dbus_dict_append_basic(dict, "domain_suffix_match",
+						     DBUS_TYPE_STRING,
+						     &ssid->domain_suffix_match);
+
+	if(ssid->domain_match)
+		supplicant_dbus_dict_append_basic(dict, "domain_match",
+						     DBUS_TYPE_STRING,
+						     &ssid->domain_match);
+
 	g_free(eap_value);
 }
 
@@ -4870,8 +4931,16 @@ static void add_network_security_proto(DBusMessageIter *dict,
 	g_free(proto);
 }
 
+static void add_network_ieee80211w(DBusMessageIter *dict, GSupplicantSSID *ssid,
+				   GSupplicantMfpOptions ieee80211w)
+{
+	supplicant_dbus_dict_append_basic(dict, "ieee80211w", DBUS_TYPE_UINT32,
+					  &ieee80211w);
+}
+
 static void add_network_security(DBusMessageIter *dict, GSupplicantSSID *ssid)
 {
+	GSupplicantMfpOptions ieee80211w;
 	char *key_mgmt;
 
 	switch (ssid->security) {
@@ -4887,7 +4956,22 @@ static void add_network_security(DBusMessageIter *dict, GSupplicantSSID *ssid)
 		add_network_security_ciphers(dict, ssid);
 		break;
 	case G_SUPPLICANT_SECURITY_PSK:
-		key_mgmt = "WPA-PSK";
+		if (ssid->keymgmt & G_SUPPLICANT_KEYMGMT_SAE) {
+			if (ssid->keymgmt & G_SUPPLICANT_KEYMGMT_WPA_PSK) {
+				/*
+				 * WPA3-Personal transition mode: supports both
+				 * WPA2-Personal (PSK) and WPA3-Personal (SAE)
+				 */
+				key_mgmt = "SAE WPA-PSK";
+				ieee80211w = G_SUPPLICANT_MFP_OPTIONAL;
+			} else {
+				key_mgmt = "SAE";
+				ieee80211w = G_SUPPLICANT_MFP_REQUIRED;
+			}
+			add_network_ieee80211w(dict, ssid, ieee80211w);
+		} else {
+			key_mgmt = "WPA-PSK";
+		}
 		add_network_security_psk(dict, ssid);
 		add_network_security_ciphers(dict, ssid);
 		add_network_security_proto(dict, ssid);
@@ -4974,7 +5058,7 @@ static void interface_wps_start_result(const char *error,
 		data->callback(err, data->interface, data->user_data);
 
 	g_free(data->path);
-	g_free(data->ssid);
+	remove_ssid(data->ssid);
 	dbus_free(data);
 }
 
@@ -5014,7 +5098,7 @@ static void wps_start(const char *error, DBusMessageIter *iter, void *user_data)
 	if (error) {
 		SUPPLICANT_DBG("error: %s", error);
 		g_free(data->path);
-		g_free(data->ssid);
+		remove_ssid(data->ssid);
 		dbus_free(data);
 		return;
 	}
@@ -5103,6 +5187,7 @@ int g_supplicant_interface_connect(GSupplicantInterface *interface,
 			 * type is 802.11x).
 			 */
 			if (compare_network_parameters(interface, ssid)) {
+				remove_ssid(ssid);
 				return -EALREADY;
 			}
 
@@ -5128,6 +5213,7 @@ int g_supplicant_interface_connect(GSupplicantInterface *interface,
 
 	if (ret < 0) {
 		g_free(data->path);
+		remove_ssid(data->ssid);
 		dbus_free(data);
 		return ret;
 	}
@@ -5178,6 +5264,7 @@ static void network_remove_result(const char *error,
 	} else {
 		if (data->callback)
 			data->callback(result, data->interface, data->user_data);
+		remove_ssid(data->ssid);
 	}
 	g_free(data->path);
 	dbus_free(data);
@@ -5231,6 +5318,7 @@ static void interface_disconnect_result(const char *error,
 							data->user_data);
 
 		g_free(data->path);
+		remove_ssid(data->ssid);
 		dbus_free(data);
 		return;
 	}
@@ -5243,10 +5331,12 @@ static void interface_disconnect_result(const char *error,
 	if (result != -ECONNABORTED) {
 		if (network_remove(data) < 0) {
 			g_free(data->path);
+			remove_ssid(data->ssid);
 			dbus_free(data);
 		}
 	} else {
 		g_free(data->path);
+		remove_ssid(data->ssid);
 		dbus_free(data);
 	}
 }

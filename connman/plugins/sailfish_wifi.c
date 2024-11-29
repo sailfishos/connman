@@ -2529,6 +2529,84 @@ static void wifi_device_scan_request(struct wifi_device *dev, gboolean manual)
 	wifi_device_scan_check(dev);
 }
 
+static void wifi_device_update_bss_list(struct wifi_device *dev);
+static gboolean wifi_device_bss_list_check(struct wifi_device *dev,
+						struct wifi_bss *must_have);
+static void wifi_device_autoscan_restart(struct wifi_device *dev,
+							bool force_full_scan);
+
+static void try_restart_autoscan(struct wifi_device *dev)
+{
+	gboolean may_restart_autoscan;
+
+	if (dev->state != WIFI_DEVICE_ON || dev->pending) {
+		DBG("not restarting autoscan");
+		return;
+	}
+
+	wifi_device_update_bss_list(dev);
+	may_restart_autoscan = wifi_device_bss_list_check(dev, NULL);
+
+	/*
+	 * If the list of WiFi network is changing, request scans
+	 * more often as long as the screen is on. Don't bother if
+	 * the screen is off and locked, or if we are happily connected
+	 * to the particular network.
+	 */
+	if (dev->screen_active && (!dev->selected ||
+			dev->selected->state != WIFI_NETWORK_CONNECTED) &&
+			may_restart_autoscan) {
+		wifi_device_autoscan_restart(dev, false);
+		return;
+	}
+
+	DBG("not restarting autoscan");
+}
+
+static void scan_cb(GSupplicantInterface *iface, GCancellable *call,
+					const GError *error, void *user_data)
+{
+	struct wifi_device *dev = user_data;
+	bool scanning;
+
+	if (error) {
+		DBG("scan failed with %s", error->message);
+		connman_device_reset_scanning(dev->device);
+
+		try_restart_autoscan(dev);
+
+		return;
+	}
+
+	DBG("scan succeeded");
+	scanning = connman_device_get_scanning(dev->device,
+						CONNMAN_SERVICE_TYPE_WIFI);
+	if (scanning) {
+		int err = connman_device_set_scanning(dev->device,
+					CONNMAN_SERVICE_TYPE_WIFI, false);
+		if (err && err != -EALREADY)
+			DBG("cannot stop scanning: %s", strerror(-err));
+		else {
+			DBG("scan stopped");
+			try_restart_autoscan(dev);
+		}
+	}
+}
+
+static void active_scan_cb(GSupplicantInterface *iface, GCancellable *call,
+					const GError *error, void *user_data)
+{
+	DBG("scan complete");
+	scan_cb(iface, call, error, user_data);
+}
+
+static void passive_scan_cb(GSupplicantInterface *iface, GCancellable *call,
+					const GError *error, void *user_data)
+{
+	DBG("scan complete");
+	scan_cb(iface, call, error, user_data);
+}
+
 static void wifi_device_active_scan_perform(struct wifi_device *dev)
 {
 	if (dev->active_scans) {
@@ -2553,7 +2631,8 @@ static void wifi_device_active_scan_perform(struct wifi_device *dev)
 		memset(&sp, 0, sizeof(sp));
 		sp.type = GSUPPLICANT_SCAN_TYPE_ACTIVE;
 		sp.ssids = (GBytes**)ssids->pdata;
-		if (gsupplicant_interface_scan(dev->iface, &sp, NULL, NULL)) {
+		if (gsupplicant_interface_scan(dev->iface, &sp, active_scan_cb,
+									dev)) {
 			DBG("requested active scan, %u ssid(s)", ssids->len-1);
 			wifi_device_scan_requested(dev);
 		}
@@ -2573,7 +2652,8 @@ static void wifi_device_update_recover_attempt_cb(gpointer netp, gpointer dev)
 
 static gboolean wifi_device_passive_scan_perform(struct wifi_device *dev)
 {
-	if (gsupplicant_interface_scan(dev->iface, NULL, NULL, NULL)) {
+	if (gsupplicant_interface_scan(dev->iface, NULL, passive_scan_cb,
+									dev)) {
 		DBG("requested passive scan");
 		g_slist_foreach(dev->networks,
 				wifi_device_update_recover_attempt_cb, dev);
@@ -3381,26 +3461,8 @@ static int wifi_device_scan(struct wifi_device *dev,
 static void wifi_device_bsss_changed(GSupplicantInterface *iface, void *data)
 {
 	struct wifi_device *dev = data;
-	gboolean may_restart_autoscan;
 
-	GASSERT(dev->state == WIFI_DEVICE_ON && !dev->pending);
-	wifi_device_update_bss_list(dev);
-	may_restart_autoscan = wifi_device_bss_list_check(dev, NULL);
-
-	/*
-	 * If the list of WiFi network is changing, request scans
-	 * more often as long as the screen is on. Don't bother if
-	 * the screen is off and locked, or if we are happily connected
-	 * to the particular network.
-	 */
-	if (dev->screen_active && (!dev->selected ||
-			dev->selected->state != WIFI_NETWORK_CONNECTED)) {
-		if (may_restart_autoscan) {
-			wifi_device_autoscan_restart(dev, false);
-		} else {
-			DBG("not restarting autoscan");
-		}
-	}
+	try_restart_autoscan(dev);
 }
 
 static gboolean wifi_device_init_cip(struct wifi_device *dev,
