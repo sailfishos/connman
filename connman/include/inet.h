@@ -109,6 +109,9 @@ typedef void (*connman_inet_ns_cb_t) (struct nd_neighbor_advert *reply,
 					void *user_data);
 int connman_inet_ipv6_do_dad(int index, int timeout_ms,struct in6_addr *addr,
 				connman_inet_ns_cb_t callback, void *user_data);
+int connman_inet_cleanup_existing_connections(enum connman_ipconfig_type type,
+					struct connman_ipaddress *ipaddress4,
+					struct connman_ipaddress *ipaddress6);
 
 #ifdef __cplusplus
 }
