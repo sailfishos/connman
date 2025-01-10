@@ -28,6 +28,10 @@
 #include <stdio.h>
 #include <ctype.h>
 #include <stdarg.h>
+#include <fcntl.h>
+#include <unistd.h>
+
+#include <connman/log.h>
 
 #include "src/shared/util.h"
 
@@ -166,4 +170,177 @@ void util_reset_afs(bool *afs)
 		return;
 
 	afs[AF_INET_POS] = afs[AF_INET6_POS] = false;
+}
+
+static bool is_file_symlink(const char *filename)
+{
+	int fd;
+
+	fd = open(filename, O_WRONLY | O_NOFOLLOW | O_CLOEXEC);
+	if (fd == -1 && errno == ELOOP)
+		return true;
+
+	if (fd >= 0)
+		close(fd);
+
+	return false;
+}
+
+int util_g_file_error_to_errno(GError *error)
+{
+	if (!error)
+		return -EBADMSG;
+
+	if (error->domain != G_FILE_ERROR)
+		return -ENOTSUP;
+
+	switch (error->code) {
+	case G_FILE_ERROR_EXIST:
+		return -EEXIST;
+	case G_FILE_ERROR_ISDIR:
+		return -EISDIR;
+	case G_FILE_ERROR_ACCES:
+		return -EACCES;
+	case G_FILE_ERROR_NAMETOOLONG:
+		return -ENAMETOOLONG;
+	case G_FILE_ERROR_NOENT:
+		return -ENOENT;
+	case G_FILE_ERROR_NOTDIR:
+		return -ENOTDIR;
+	case G_FILE_ERROR_NXIO:
+		return -ENXIO;
+	case G_FILE_ERROR_NODEV:
+		return -ENODEV;
+	case G_FILE_ERROR_ROFS:
+		return -EROFS;
+	case G_FILE_ERROR_TXTBSY:
+		return -ETXTBSY;
+	case G_FILE_ERROR_FAULT:
+		return -EFAULT;
+	case G_FILE_ERROR_LOOP:
+		return -ELOOP;
+	case G_FILE_ERROR_NOSPC:
+		return -ENOSPC;
+	case G_FILE_ERROR_NOMEM:
+		return -ENOMEM;
+	case G_FILE_ERROR_MFILE:
+		return -EMFILE;
+	case G_FILE_ERROR_NFILE:
+		return -ENFILE;
+	case G_FILE_ERROR_BADF:
+		return EBADF;
+	case G_FILE_ERROR_INVAL:
+		return -EINVAL;
+	case G_FILE_ERROR_PIPE:
+		return -EPIPE;
+	case G_FILE_ERROR_AGAIN:
+		return -EAGAIN;
+	case G_FILE_ERROR_INTR:
+		return -EINTR;
+	case G_FILE_ERROR_IO:
+		return -EIO;
+	case G_FILE_ERROR_PERM:
+		return -EPERM;
+	case G_FILE_ERROR_NOSYS:
+		return -ENOSYS;
+	case G_FILE_ERROR_FAILED:
+		return -EINVAL;
+	}
+
+	return -EINVAL;
+}
+
+int util_read_config_files_from(const char *path, const char *suffix,
+					GList **conffiles, config_callback cb)
+{
+	GList *files = NULL;
+	GList *iter;
+	GError *error = NULL;
+	GDir *dir;
+	const char *filename = NULL;
+	int err = 0;
+
+	if (!path || !suffix)
+		return -EINVAL;
+
+	if (!g_file_test(path, G_FILE_TEST_IS_DIR))
+		return -ENOTDIR;
+
+	dir = g_dir_open(path, 0, &error);
+	if (!dir) {
+		if (error) {
+			connman_warn("cannot open dir %s, error: %s", path,
+								error->message);
+			err = util_g_file_error_to_errno(error);
+		} else {
+			err = -ENOMEM;
+		}
+	}
+
+	g_clear_error(&error);
+
+	if (err)
+		return err;
+
+	/*
+	 * Ordering of files is not guaranteed with g_dir_open(). Read
+	 * the filenames into list to be sorted after.
+	 */
+	while ((filename = g_dir_read_name(dir))) {
+		char *filepath;
+
+		/* Read configs that have the requested conf suffix */
+		if (!g_str_has_suffix(filename, suffix)) {
+			connman_warn("suffix mismatch in %s required: %s",
+							filename, suffix);
+			continue;
+		}
+
+		filepath = g_build_filename(path, filename, NULL);
+
+		/* Allow only regular files */
+		if (!g_file_test(filepath, G_FILE_TEST_IS_REGULAR)) {
+			connman_warn("invalid non-regular file %s", filepath);
+			g_free(filepath);
+			continue;
+		}
+
+		/* Do not allow symlinks */
+		if (is_file_symlink(filepath)) {
+			connman_warn("config %s is a symlink, ignore",
+							filepath);
+			g_free(filepath);
+			continue;
+		}
+
+		/*
+		 * Prepend read files into list of configuration
+		 * files to be used in checks when new configurations
+		 * are added to avoid unnecessary reads of already read
+		 * configurations. Sort list after all are added.
+		 */
+		files = g_list_prepend(files, filepath);
+	}
+
+	g_dir_close(dir);
+
+	files = g_list_sort(files, (GCompareFunc)g_strcmp0);
+
+	if (cb) {
+		for (iter = files; iter; iter = iter->next) {
+			filename = iter->data;
+
+			err = cb(filename);
+			if (err)
+				connman_warn("cannot process config %s: %d",
+								filename, err);
+		}
+	}
+
+	if (conffiles)
+		*conffiles = files;
+	else
+		g_list_free_full(files, g_free);
+
+	return 0;
 }

@@ -451,7 +451,7 @@ if XTABLES
 unit_test_firewall_iptables_SOURCES = $(backtrace_sources) src/connman.h \
 				src/log.c src/inotify.c src/dbus.c src/error.c \
 				src/inet.c src/iptables-validate.c \
-				unit/test-firewall-iptables.c
+				src/shared/util.c unit/test-firewall-iptables.c
 unit_test_firewall_iptables_LDADD = @GLIB_LIBS@ @DBUS_LIBS@ -ldl
 endif
 
@@ -684,7 +684,7 @@ tools_iptables_unit_CFLAGS = @DBUS_CFLAGS@ @GLIB_CFLAGS@ @XTABLES_CFLAGS@ \
 tools_iptables_unit_SOURCES = $(backtrace_sources) src/log.c src/storage.c \
 		src/inotify.c src/iptables.c src/nat.c \
 		src/inet.c src/iptables-validate.c tools/iptables-unit.c \
-		src/error.c src/dbus.c
+		src/error.c src/dbus.c src/shared/util.c
 tools_iptables_unit_LDADD = @GLIB_LIBS@ @DBUS_LIBS@ @XTABLES_LIBS@ @LIBIPTC_LIBS@ -ldl
 
 tools_ip6tables_test_SOURCES = $(backtrace_sources) src/log.c \

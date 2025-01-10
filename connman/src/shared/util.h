@@ -63,3 +63,9 @@ char *util_timeval_to_iso8601(struct timeval *time);
 void util_set_afs(bool *afs, int family);
 bool util_get_afs(bool *afs, int family);
 void util_reset_afs(bool *afs);
+
+typedef int (*config_callback) (const char *filepath);
+/* Returns -ENOTSUP for non G_FILE_ERROR in error */
+int util_g_file_error_to_errno(GError *error);
+int util_read_config_files_from(const char *path, const char *suffix,
+					GList **conffiles, config_callback cb);
