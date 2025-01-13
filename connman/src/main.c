@@ -45,6 +45,7 @@
 
 #include "connman.h"
 #include "iptables_ext.h"
+#include "src/shared/util.h"
 
 #define CONF_ARRAY_SIZE(x) (sizeof(x)/sizeof(x[0]) - 1)
 
@@ -66,6 +67,8 @@
 
 #define MAINFILE "main.conf"
 #define CONFIGMAINFILE CONFIGDIR "/" MAINFILE
+#define CONFIGMAINDIR CONFIGMAINFILE ".d"
+#define CONFIGSUFFIX ".conf"
 
 static char *default_auto_connect[] = {
 	NULL
@@ -1130,6 +1133,12 @@ int main(int argc, char *argv[])
 		config_init(CONFIGMAINFILE);
 	else
 		config_init(option_config);
+
+	fs_err = util_read_config_files_from(CONFIGMAINDIR, CONFIGSUFFIX,
+				NULL, config_init);
+	if (fs_err && fs_err != -ENOTDIR)
+		connman_error("failed to read configs from %s: %s",
+				CONFIGMAINDIR, strerror(fs_err));
 
 	if (connman_settings.fs_identity)
 		__connman_set_fsid(connman_settings.fs_identity);
