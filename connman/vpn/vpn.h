@@ -127,6 +127,7 @@ bool __vpn_config_get_boolean(GKeyFile *key_file, const char *group_name,
 
 const char *vpn_settings_get_state_dir(void);
 int __vpn_settings_init(const char *file, const char *dir);
+int __vpn_settings_process_config(const char *configfile);
 void __vpn_settings_cleanup(void);
 GKeyFile *__vpn_settings_load_config(const char *file);
 unsigned int __vpn_settings_get_timeout_inputreq(void);

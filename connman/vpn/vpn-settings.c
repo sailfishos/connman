@@ -54,21 +54,7 @@ static struct {
 	char **binary_supplementary_groups;
 	char *binary_user_override;
 	char **system_binary_users;
-} connman_vpn_settings  = {
-	.timeout_inputreq		= DEFAULT_INPUT_REQUEST_TIMEOUT,
-	.fs_identity 			= NULL,
-	.storage_root			= NULL,
-	.state_dir			= NULL,
-	.user_storage_dir		= NULL,
-	.storage_dir_permissions	= DEFAULT_STORAGE_DIR_PERMISSIONS,
-	.storage_file_permissions	= DEFAULT_STORAGE_FILE_PERMISSIONS,
-	.umask				= DEFAULT_UMASK,
-	.binary_user			= NULL,
-	.binary_group			= NULL,
-	.binary_supplementary_groups	= NULL,
-	.binary_user_override		= NULL,
-	.system_binary_users		= NULL,
-};
+} connman_vpn_settings = { 0 };
 
 struct vpn_plugin_data {
 	char *binary_user;
@@ -295,6 +281,8 @@ static gboolean get_perm(GKeyFile *config, const char *group,
 static void parse_config(GKeyFile *config, const char *file)
 {
 	const char *group = "General";
+	char **str_list = NULL;
+	char *str = NULL;
 	GError *error = NULL;
 	int timeout;
 
@@ -310,14 +298,29 @@ static void parse_config(GKeyFile *config, const char *file)
 
 	g_clear_error(&error);
 
-	connman_vpn_settings.fs_identity =
-		get_string(config, group, "FileSystemIdentity");
-	connman_vpn_settings.storage_root =
-		get_string(config, group, "StorageRoot");
-	connman_vpn_settings.state_dir =
-		get_string(config, group, "StateDirectory");
-	connman_vpn_settings.user_storage_dir =
-		get_string(config, group, "UserStorage");
+	str = get_string(config, group, "FileSystemIdentity");
+	if (str) {
+		g_free(connman_vpn_settings.fs_identity);
+		connman_vpn_settings.fs_identity = str;
+	}
+
+	str = get_string(config, group, "StorageRoot");
+	if (str) {
+		g_free(connman_vpn_settings.storage_root);
+		connman_vpn_settings.storage_root = str;
+	}
+
+	str = get_string(config, group, "StateDirectory");
+	if (str) {
+		g_free(connman_vpn_settings.state_dir);
+		connman_vpn_settings.state_dir = str;
+	}
+
+	str = get_string(config, group, "UserStorage");
+	if (str) {
+		g_free(connman_vpn_settings.user_storage_dir);
+		connman_vpn_settings.user_storage_dir = str;
+	}
 
 	get_perm(config, group, "StorageDirPermissions",
 			&connman_vpn_settings.storage_dir_permissions);
@@ -325,16 +328,29 @@ static void parse_config(GKeyFile *config, const char *file)
 			&connman_vpn_settings.storage_file_permissions);
 	get_perm(config, group, "Umask", &connman_vpn_settings.umask);
 
-	connman_vpn_settings.binary_user = get_string(config, VPN_GROUP,
-						"User");
-	connman_vpn_settings.binary_group = get_string(config, VPN_GROUP,
-						"Group");
-	connman_vpn_settings.binary_supplementary_groups = get_string_list(
-						config, VPN_GROUP,
-						"SupplementaryGroups");
-	connman_vpn_settings.system_binary_users = get_string_list(
-						config, VPN_GROUP,
-						"SystemBinaryUsers");
+	str = get_string(config, VPN_GROUP, "User");
+	if (str) {
+		g_free(connman_vpn_settings.binary_user);
+		connman_vpn_settings.binary_user = str;
+	}
+
+	str = get_string(config, VPN_GROUP, "Group");
+	if (str) {
+		g_free(connman_vpn_settings.binary_group);
+		connman_vpn_settings.binary_group = str;
+	}
+
+	str_list = get_string_list(config, VPN_GROUP, "SupplementaryGroups");
+	if (str_list) {
+		g_strfreev(connman_vpn_settings.binary_supplementary_groups);
+		connman_vpn_settings.binary_supplementary_groups = str_list;
+	}
+
+	str_list = get_string_list(config, VPN_GROUP, "SystemBinaryUsers");
+	if (str_list) {
+		g_strfreev(connman_vpn_settings.system_binary_users);
+		connman_vpn_settings.system_binary_users = str_list;
+	}
 }
 
 struct vpn_plugin_data *vpn_settings_get_vpn_plugin_config(const char *name)
@@ -421,26 +437,43 @@ GKeyFile *__vpn_settings_load_config(const char *file)
 	g_key_file_set_list_separator(keyfile, ',');
 
 	if (!g_key_file_load_from_file(keyfile, file, 0, &err)) {
-		if (err->code != G_FILE_ERROR_NOENT) {
+		if (err->code != G_FILE_ERROR_NOENT)
 			connman_error("Parsing %s failed: %s", file,
 								err->message);
-		}
 
-		g_error_free(err);
 		g_key_file_unref(keyfile);
-		return NULL;
+		keyfile = NULL;
 	}
+
+	g_clear_error(&err);
 
 	return keyfile;
 }
 
-int __vpn_settings_init(const char *file, const char *dir)
+int __vpn_settings_process_config(const char *configfile)
 {
 	GKeyFile *config;
 
+	if (!configfile)
+		return -EINVAL;
+
+	DBG("%s", configfile);
+
+	config = __vpn_settings_load_config(configfile);
+	if (config) {
+		parse_config(config, configfile);
+		g_key_file_unref(config);
+	}
+
+	return 0;
+}
+
+int __vpn_settings_init(const char *file, const char *dir)
+{
 	if (!file || !dir)
 		return -EINVAL;
 
+	memset(&connman_vpn_settings, 0, sizeof(connman_vpn_settings));
 	connman_vpn_settings.timeout_inputreq = DEFAULT_INPUT_REQUEST_TIMEOUT;
 	connman_vpn_settings.storage_dir_permissions =
 				DEFAULT_STORAGE_DIR_PERMISSIONS;
@@ -450,42 +483,20 @@ int __vpn_settings_init(const char *file, const char *dir)
 
 	configdir = g_build_filename(dir, PLUGIN_CONFIGDIR, NULL);
 
-	config = __vpn_settings_load_config(file);
-	parse_config(config, file);
-	if (config)
-		g_key_file_unref(config);
-
-	return 0;
+	return __vpn_settings_process_config(file);
 }
 
 void __vpn_settings_cleanup()
 {
 	g_free(connman_vpn_settings.fs_identity);
-	connman_vpn_settings.fs_identity = NULL;
-
 	g_free(connman_vpn_settings.storage_root);
-	connman_vpn_settings.storage_root = NULL;
-
 	g_free(connman_vpn_settings.user_storage_dir);
-	connman_vpn_settings.user_storage_dir = NULL;
-
 	g_free(connman_vpn_settings.state_dir);
-	connman_vpn_settings.state_dir = NULL;
-
 	g_free(connman_vpn_settings.binary_user);
-	connman_vpn_settings.binary_user = NULL;
-
 	g_free(connman_vpn_settings.binary_group);
-	connman_vpn_settings.binary_group = NULL;
-
 	g_strfreev(connman_vpn_settings.binary_supplementary_groups);
-	connman_vpn_settings.binary_supplementary_groups = NULL;
-
 	g_strfreev(connman_vpn_settings.system_binary_users);
-	connman_vpn_settings.system_binary_users = NULL;
-
 	g_free(connman_vpn_settings.binary_user_override);
-	connman_vpn_settings.binary_user_override = NULL;
 
 	g_free(configdir);
 	configdir = NULL;
