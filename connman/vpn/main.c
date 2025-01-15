@@ -42,8 +42,11 @@
 #include "vpn.h"
 
 #include "connman/vpn-dbus.h"
+#include "src/shared/util.h"
 
 #define CONFIGMAINFILE CONFIGDIR "/connman-vpn.conf"
+#define CONFIGMAINDIR CONFIGMAINFILE ".d"
+#define CONFIGSUFFIX ".conf"
 
 static GMainLoop *main_loop = NULL;
 
@@ -202,6 +205,7 @@ int main(int argc, char *argv[])
 	DBusConnection *conn;
 	DBusError err;
 	guint signal;
+	int conf_err;
 
 	context = g_option_context_new(NULL);
 	g_option_context_add_main_entries(context, options, NULL);
@@ -256,6 +260,12 @@ int main(int argc, char *argv[])
 		__vpn_settings_init(CONFIGMAINFILE, CONFIGDIR);
 	else
 		__vpn_settings_init(option_config, CONFIGDIR);
+
+	conf_err = util_read_config_files_from(CONFIGMAINDIR, CONFIGSUFFIX,
+			NULL, __vpn_settings_process_config);
+	if (conf_err && conf_err != -ENOTDIR)
+		connman_error("failed to read configs from %s: %s",
+				CONFIGMAINDIR, strerror(conf_err));
 
 	const char* fs_identity = NULL;
 	if ((fs_identity = __vpn_settings_get_fs_identity()))
