@@ -144,7 +144,12 @@ void __connman_log_enable(struct connman_debug_desc *start,
 
 #include <connman/setting.h>
 
+void __connman_setting_read_config_values(GKeyFile *config, bool append);
 const char *__connman_setting_get_fallback_device_type(const char *interface);
+void __connman_setting_set_option(const char *key, const char *value);
+bool __connman_setting_is_supported_option(const char *key);
+int __connman_setting_init();
+void __connman_setting_cleanup();
 
 #include <connman/plugin.h>
 

@@ -28,15 +28,62 @@
 extern "C" {
 #endif
 
-#define CONF_STATUS_URL_IPV6            "Ipv6StatusUrl"
-#define CONF_STATUS_URL_IPV4            "Ipv4StatusUrl"
-#define CONF_TETHERING_SUBNET_BLOCK     "TetheringSubnetBlock"
+#define CONF_STATUS_URL_IPV6                 "Ipv6StatusUrl"
+#define CONF_STATUS_URL_IPV4                 "Ipv4StatusUrl"
+#define CONF_TETHERING_SUBNET_BLOCK          "TetheringSubnetBlock"
+
+#define CONF_BG_SCAN                         "BackgroundScanning"
+#define CONF_FALLBACK_TIMESERVERS            "FallbackTimeservers"
+#define CONF_AUTO_CONNECT_TECHS              "DefaultAutoConnectTechnologies"
+#define CONF_FAVORITE_TECHS                  "DefaultFavoriteTechnologies"
+#define CONF_ALWAYS_CONNECTED_TECHS          "AlwaysConnectedTechnologies"
+#define CONF_PREFERRED_TECHS                 "PreferredTechnologies"
+#define CONF_FALLBACK_NAMESERVERS            "FallbackNameservers"
+#define CONF_TIMEOUT_INPUTREQ                "InputRequestTimeout"
+#define CONF_TIMEOUT_BROWSERLAUNCH           "BrowserLaunchTimeout"
+#define CONF_BLACKLISTED_INTERFACES          "NetworkInterfaceBlacklist"
+#define CONF_ALLOW_HOSTNAME_UPDATES          "AllowHostnameUpdates"
+#define CONF_ALLOW_DOMAINNAME_UPDATES        "AllowDomainnameUpdates"
+#define CONF_SINGLE_TECH                     "SingleConnectedTechnology"
+#define CONF_TETHERING_TECHNOLOGIES          "TetheringTechnologies"
+#define CONF_PERSISTENT_TETHERING_MODE       "PersistentTetheringMode"
+#define CONF_DONT_BRING_DOWN_AT_STARTUP      "DontBringDownAtStartup"
+#define CONF_DISABLE_PLUGINS                 "DisablePlugins"
+#define CONF_FILE_SYSTEM_IDENTITY            "FileSystemIdentity"
+#define CONF_STORAGE_ROOT                    "StorageRoot"
+#define CONF_STORAGE_ROOT_PERMISSIONS        "StorageRootPermissions"
+#define CONF_STORAGE_DIR_PERMISSIONS         "StorageDirPermissions"
+#define CONF_STORAGE_FILE_PERMISSIONS        "StorageFilePermissions"
+#define CONF_USER_STORAGE_DIR                "UserStorage"
+#define CONF_UMASK                           "Umask"
+#define CONF_ENABLE_6TO4                     "Enable6to4"
+#define CONF_VENDOR_CLASS_ID                 "VendorClassID"
+#define CONF_ENABLE_ONLINE_CHECK             "EnableOnlineCheck"
+#define CONF_AUTO_CONNECT_ROAMING_SERVICES   "AutoConnectRoamingServices"
+#define CONF_ACD                             "AddressConflictDetection"
+#define CONF_USE_GATEWAYS_AS_TIMESERVERS     "UseGatewaysAsTimeservers"
+#define CONF_FALLBACK_DEVICE_TYPES           "FallbackDeviceTypes"
+#define CONF_ENABLE_LOGIN_MANAGER            "EnableLoginManager"
+#define CONF_LOCALTIME                       "Localtime"
+#define CONF_REGDOM_FOLLOWS_TIMEZONE         "RegdomFollowsTimezone"
+
+#define CONF_ONLINE_CHECK_INITIAL_INTERVAL   "OnlineCheckInitialInterval"
+#define CONF_ONLINE_CHECK_MAX_INTERVAL       "OnlineCheckMaxInterval"
+
+#define CONF_OPTION_CONFIG                   "config"
+#define CONF_OPTION_DEBUG                    "debug"
+#define CONF_OPTION_DEVICE                   "device"
+#define CONF_OPTION_NODEVICE                 "nodevice"
+#define CONF_OPTION_PLUGIN                   "plugin"
+#define CONF_OPTION_NOPLUGIN                 "noplugin"
+#define CONF_OPTION_WIFI                     "wifi"
 
 const char *connman_setting_get_string(const char *key);
 bool connman_setting_get_bool(const char *key);
 unsigned int connman_setting_get_uint(const char *key);
 char **connman_setting_get_string_list(const char *key);
 unsigned int *connman_setting_get_uint_list(const char *key);
+mode_t connman_setting_get_fs_mode(const char *key);
 
 unsigned int connman_timeout_input_request(void);
 unsigned int connman_timeout_browser_launch(void);

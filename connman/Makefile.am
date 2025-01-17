@@ -144,7 +144,7 @@ src_connmand_SOURCES = $(gdhcp_sources) $(gweb_sources) $(stats_sources) \
 			src/acd.c src/wakeup_timer.c src/fsid.c \
 			src/access.c vpn/vpn-settings.c vpn/vpn-util.c \
 			src/sailfish_iptables_ext.c src/iptables-validate.c \
-			src/login_manager.c
+			src/login_manager.c src/setting.c
 
 if SYSTEMD
 src_connmand_SOURCES += src/systemd_login.c
