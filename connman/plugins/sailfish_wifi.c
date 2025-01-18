@@ -1203,6 +1203,7 @@ static GHashTable *wifi_network_init_connect_params(struct wifi_network *net,
 	params->bgscan = NETWORK_BGSCAN;
 	params->mode = GSUPPLICANT_OP_MODE_INFRA;
 	params->security = gsupplicant_bss_security(bss_data->bss);
+	params->keymgmt = gsupplicant_bss_keymgmt(bss_data->bss);
 
 	eap = connman_network_get_string(net->network, NETWORK_KEY_WIFI_EAP);
 	if (eap) {
