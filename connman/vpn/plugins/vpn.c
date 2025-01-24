@@ -638,8 +638,7 @@ static int vpn_connect(struct vpn_provider *provider,
 			vpn_driver_data->vpn_driver->flags & VPN_FLAG_NO_DAEMON) {
 
 		ret = vpn_driver_data->vpn_driver->connect(provider,
-						NULL, NULL, cb, dbus_sender,
-						user_data);
+						NULL, NULL, NULL, NULL, NULL);
 		if (!ret)
 			g_timeout_add(1, update_provider_state, provider);
 
