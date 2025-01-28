@@ -371,6 +371,8 @@ static void wifi_mce_debug_notify(struct connman_debug_desc *desc)
 
 static enum connman_service_security wifi_security(const char *security)
 {
+	DBG("%s", security);
+
 	if (security) {
 		if (!g_ascii_strcasecmp(security, "none")) {
 			return CONNMAN_SERVICE_SECURITY_NONE;
@@ -380,6 +382,12 @@ static enum connman_service_security wifi_security(const char *security)
 			   !g_ascii_strcasecmp(security, "wpa") ||
 			   !g_ascii_strcasecmp(security, "rsn")) {
 			return CONNMAN_SERVICE_SECURITY_PSK;
+		/* Convert all types of psk sae, D-Bus does not allow "-" */
+		} else if (!g_ascii_strcasecmp(security, "psksae") ||
+				!g_ascii_strcasecmp(security, "psk-sae")) {
+			return CONNMAN_SERVICE_SECURITY_PSK_SAE;
+		} else if (!g_ascii_strcasecmp(security, "sae")) {
+			return CONNMAN_SERVICE_SECURITY_SAE;
 		} else if (!g_ascii_strcasecmp(security, "ieee8021x")) {
 			return CONNMAN_SERVICE_SECURITY_8021X;
 		}
@@ -396,6 +404,10 @@ static enum connman_service_security wifi_bss_security(GSupplicantBSS *bss)
 		return CONNMAN_SERVICE_SECURITY_WEP;
 	case GSUPPLICANT_SECURITY_PSK:
 		return CONNMAN_SERVICE_SECURITY_PSK;
+	case GSUPPLICANT_SECURITY_PSK_SAE:
+		return CONNMAN_SERVICE_SECURITY_PSK_SAE;
+	case GSUPPLICANT_SECURITY_SAE:
+		return CONNMAN_SERVICE_SECURITY_SAE;
 	case GSUPPLICANT_SECURITY_EAP:
 		return CONNMAN_SERVICE_SECURITY_8021X;
 	}
@@ -408,22 +420,24 @@ static const char *wifi_bss_enc_mode(GSupplicantBSS *bss)
 
 	switch (wifi_bss_security(bss)) {
 	case CONNMAN_SERVICE_SECURITY_PSK:
+	case CONNMAN_SERVICE_SECURITY_PSK_SAE:
+	case CONNMAN_SERVICE_SECURITY_SAE:
 	case CONNMAN_SERVICE_SECURITY_8021X:
 		pairwise = gsupplicant_bss_pairwise(bss);
 		if ((pairwise & GSUPPLICANT_CIPHER_CCMP) &&
-		    (pairwise & GSUPPLICANT_CIPHER_TKIP)) {
+			(pairwise & GSUPPLICANT_CIPHER_TKIP)) {
 			return "mixed";
 		} else if (pairwise & GSUPPLICANT_CIPHER_CCMP) {
 			return "aes";
 		} else if (pairwise & GSUPPLICANT_CIPHER_TKIP) {
 			return "tkip";
 		}
-	default:
-		return NULL;
 	case CONNMAN_SERVICE_SECURITY_WEP:
 		return "wep";
 	case CONNMAN_SERVICE_SECURITY_NONE:
 		return "none";
+	default:
+		return NULL;
 	}
 }
 
@@ -1771,6 +1785,7 @@ static void wifi_network_init(struct wifi_network *net, struct wifi_bss *data)
 	 *     network_probe (network.c)
 	 *     connman_network_set_group (network.c)
 	 */
+	DBG("setting group %s", net->ident);
 	connman_network_set_group(net->network, net->ident);
 	g_free(tmp);
 }
@@ -2157,6 +2172,7 @@ static struct wifi_network *wifi_device_alloc_network(struct wifi_device *dev,
 	GASSERT(!wifi_device_network_for_bss(dev, bss_data->bss));
 	net = g_slice_new0(struct wifi_network);
 	net->ident = g_strdup(bss_data->ident);
+
 	net->dev = dev;
 	dev->networks = g_slist_prepend(dev->networks, net);
 	g_hash_table_replace(dev->ident_net, net->ident, net);
