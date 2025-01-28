@@ -369,6 +369,8 @@ static void wifi_mce_debug_notify(struct connman_debug_desc *desc)
 
 static enum connman_service_security wifi_security(const char *security)
 {
+	DBG("%s", security);
+
 	if (security) {
 		if (!g_ascii_strcasecmp(security, "none")) {
 			return CONNMAN_SERVICE_SECURITY_NONE;
@@ -378,6 +380,10 @@ static enum connman_service_security wifi_security(const char *security)
 			   !g_ascii_strcasecmp(security, "wpa") ||
 			   !g_ascii_strcasecmp(security, "rsn")) {
 			return CONNMAN_SERVICE_SECURITY_PSK;
+		} else if (!g_ascii_strcasecmp(security, "psk-sae")) {
+			return CONNMAN_SERVICE_SECURITY_PSK_SAE:
+		} else if (!g_ascii_strcasecmp(security, "sae")) {
+			return CONNMAN_SERVICE_SECURITY_SAE:
 		} else if (!g_ascii_strcasecmp(security, "ieee8021x")) {
 			return CONNMAN_SERVICE_SECURITY_8021X;
 		}
@@ -396,6 +402,8 @@ static enum connman_service_security wifi_bss_security(GSupplicantBSS *bss)
 		return CONNMAN_SERVICE_SECURITY_PSK;
 	case GSUPPLICANT_SECURITY_EAP:
 		return CONNMAN_SERVICE_SECURITY_8021X;
+	case GSUPPLICANT_SECURITY_SAE:
+		return CONNMAN_SERVICE_SECURITY_SAE;
 	}
 	return CONNMAN_SERVICE_SECURITY_UNKNOWN;
 }
@@ -406,16 +414,22 @@ static const char *wifi_bss_enc_mode(GSupplicantBSS *bss)
 
 	switch (wifi_bss_security(bss)) {
 	case CONNMAN_SERVICE_SECURITY_PSK:
+	case CONNMAN_SERVICE_SECURITY_PSK_SAE:
+	case CONNMAN_SERVICE_SECURITY_SAE:
 	case CONNMAN_SERVICE_SECURITY_8021X:
 		pairwise = gsupplicant_bss_pairwise(bss);
-		if ((pairwise & GSUPPLICANT_CIPHER_CCMP) &&
-		    (pairwise & GSUPPLICANT_CIPHER_TKIP)) {
+		if ((pairwise &
+			(GSUPPLICANT_CIPHER_CCMP|GSUPPLICANT_CIPHER_CCMP_256) &&
+			(pairwise & GSUPPLICANT_CIPHER_TKIP)) {
 			return "mixed";
-		} else if (pairwise & GSUPPLICANT_CIPHER_CCMP) {
+		} else if (pairwise &
+			(GSUPPLICANT_CIPHER_CCMP|GSUPPLICANT_CIPHER_CCMP_256) {
 			return "aes";
 		} else if (pairwise & GSUPPLICANT_CIPHER_TKIP) {
 			return "tkip";
-		}
+		} else if (pairwise &
+			(GSUPPLICANT_CIPHER_GCMP|GSUPPLICANT_CIPHER_GCMP_256) {
+			return "gcmp";
 	default:
 		return NULL;
 	case CONNMAN_SERVICE_SECURITY_WEP:
@@ -1769,6 +1783,7 @@ static void wifi_network_init(struct wifi_network *net, struct wifi_bss *data)
 	 *     network_probe (network.c)
 	 *     connman_network_set_group (network.c)
 	 */
+	DBG("setting group %s", net->ident);
 	connman_network_set_group(net->network, net->ident);
 	g_free(tmp);
 }
@@ -2146,6 +2161,25 @@ static void wifi_device_drop_expired_networks_cb(gpointer netp, gpointer devp)
 	}
 }
 
+static char *create_ident(const char *ident, const char *new_suffix)
+{
+	char **tokens;
+	const char *separator = "_";
+	gsize len;
+
+	if (ident && !new_suffix)
+		return g_strdup(ident);
+
+	/* Name_MAC_security */
+	tokens = g_strsplit(ident, separator, 3);
+	if (!tokens || g_strv_length(tokens) != 3) {
+		DBG("invalid ident %s", ident);
+		return g_strdup(ident);
+	}
+
+	return g_strjoin(separator, ident[0], ident[1], new_suffix, NULL);
+}
+
 static struct wifi_network *wifi_device_alloc_network(struct wifi_device *dev,
 						struct wifi_bss *bss_data)
 {
@@ -2154,7 +2188,29 @@ static struct wifi_network *wifi_device_alloc_network(struct wifi_device *dev,
 
 	GASSERT(!wifi_device_network_for_bss(dev, bss_data->bss));
 	net = g_slice_new0(struct wifi_network);
-	net->ident = g_strdup(bss_data->ident);
+
+	if (bss_data->bss && bss_data->bss->wpa) {
+		bool has_suffix = g_str_has_suffix(bss_data->ident, "_psk");
+
+		DBG("check wpa keymgmt %s", bss_data->ident);
+
+		switch (bss_data->bss->wpa->options) {
+		case GSUPPLICANT_MFP_NONE:
+			break;
+		case GSUPPLICANT_MFP_OPTIONAL:
+			if (has_suffix)
+				net->ident = create_ident(ident, "psk-sae");
+			break;
+		case GSUPPLICANT_MFP_REQUIRED:
+			if (has_suffix)
+				net->ident = create_ident(ident, "sae");
+			break;
+		}
+	}
+
+	if (!net->ident)
+		net->ident = create_ident(bss_data->ident, NULL);
+
 	net->dev = dev;
 	dev->networks = g_slist_prepend(dev->networks, net);
 	g_hash_table_replace(dev->ident_net, net->ident, net);
