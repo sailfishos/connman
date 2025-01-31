@@ -3,7 +3,7 @@
  *  ConnMan VPN daemon settings unit tests
  *
  *  Copyright (C) 2018 Jolla Ltd. All rights reserved.
- *  Contact: jussi.laakkonen@jolla.com
+ *  Copyright (C) 2025 Jolla Mobile Ltd
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License version 2 as
@@ -67,6 +67,7 @@ const char *__connman_tethering_get_bridge(void) { return NULL; }
 void __connman_tethering_set_disabled(void) { return; }
 int __connman_tethering_set_enabled(void) { return 0; }
 void __connman_tethering_list_clients(DBusMessageIter *array) { return; }
+void __connman_tethering_list_clients_details(DBusMessageIter *array) { return; }
 int __connman_private_network_release(const char *path) { return 0; }
 int __connman_private_network_request(DBusMessage *msg, const char *owner)
 {
