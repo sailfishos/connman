@@ -3,6 +3,7 @@
  *  Connection Manager
  *
  *  Copyright (C) 2007-2013  Intel Corporation. All rights reserved.
+ *  Copyright (C) 2025 Jolla Mobile Ltd
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License version 2 as
@@ -279,6 +280,27 @@ static DBusMessage *get_tethering_clients(DBusConnection *conn,
 	__connman_tethering_list_clients(&array);
 
 	dbus_message_iter_close_container(&iter, &array);
+	return reply;
+}
+
+static DBusMessage *get_tethering_clients_details(DBusConnection *conn,
+					DBusMessage *msg, void *data)
+{
+	DBusMessage *reply;
+	DBusMessageIter iter, dict;
+
+	reply = dbus_message_new_method_return(msg);
+	if (!reply)
+		return NULL;
+
+	dbus_message_iter_init_append(reply, &iter);
+
+	connman_dbus_dict_open(&iter, &dict);
+
+	__connman_tethering_list_clients_details(&dict);
+
+	connman_dbus_dict_close(&iter, &dict);
+
 	return reply;
 }
 
@@ -833,6 +855,10 @@ static const GDBusMethodTable manager_methods[] = {
 	{ GDBUS_METHOD("GetTetheringClients",
 			NULL, GDBUS_ARGS({ "tethering_clients", "as" }),
 			get_tethering_clients) },
+	{ GDBUS_METHOD("GetTetheringClientsDetails",
+			NULL,
+			GDBUS_ARGS({ "tethering_clients_details", "a{s{sv}}" }),
+			get_tethering_clients_details) },
 	{ GDBUS_DEPRECATED_ASYNC_METHOD("ConnectProvider",
 			      GDBUS_ARGS({ "provider", "a{sv}" }),
 			      GDBUS_ARGS({ "path", "o" }),
@@ -900,6 +926,9 @@ static const GDBusSignalTable manager_signals[] = {
 	{ GDBUS_SIGNAL("PeersChanged",
 			GDBUS_ARGS({ "changed", "a(oa{sv})" },
 					{ "removed", "ao" })) },
+	{ GDBUS_SIGNAL("TetheringClientsChanged",
+			GDBUS_ARGS({ "changed", "as" },
+					{ "removed", "as" })) },
 	{ },
 };
 
