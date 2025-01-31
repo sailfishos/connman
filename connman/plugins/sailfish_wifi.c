@@ -3,6 +3,7 @@
  *
  *  Copyright (C) 2017-2020 Jolla Ltd. All rights reserved.
  *  Copyright (C) 2020 Open Mobile Platform LLC.
+ *  Copyright (C) 2025 Jolla Mobile Ltd
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License version 2 as
@@ -115,6 +116,7 @@ enum device_interface_events {
 	DEVICE_INTERFACE_EVENT_COUNTRY,
 	DEVICE_INTERFACE_EVENT_SCANNING,
 	DEVICE_INTERFACE_EVENT_BSSS,
+	DEVICE_INTERFACE_EVENT_STATIONS,
 	DEVICE_INTERFACE_EVENT_COUNT
 };
 
@@ -3634,6 +3636,92 @@ static void wifi_tether_failed(struct wifi_device *dev)
 	wifi_device_on_start(dev);
 }
 
+gint client_compare(gconstpointer a, gconstpointer b)
+{
+	const char *addr_a = a;
+	const char *addr_b = b;
+
+	return g_strcmp0(addr_a, addr_b);
+}
+
+static void handle_tethering_clients(GList *a, GList *b, bool add,
+							bool handle_one)
+{
+	GList *iter;
+
+	for (iter = a; iter; iter = iter->next) {
+		if (!g_list_find_custom(b, iter->data, client_compare)) {
+			const char *addr = iter->data;
+
+			if (add) {
+				DBG("new %s", addr);
+				connman_tethering_client_register(addr,
+						CONNMAN_SERVICE_TYPE_WIFI, 0);
+			} else {
+				DBG("removed %s", addr);
+				connman_tethering_client_unregister(addr);
+			}
+
+			if (handle_one)
+				break;
+		}
+	}
+}
+
+static void wifi_device_stations_changed(GSupplicantInterface *interface,
+					void *data)
+{
+	struct wifi_device *dev = data;
+	const GStrV *list;
+	GList *old_clients;
+	GList *new_clients = NULL;
+	guint old_length;
+	guint new_length;
+
+	DBG("");
+
+	if (!dev || !dev->tethering || !dev->iface)
+		return;
+
+	if (!dev->iface->stations) {
+		DBG("no stations");
+		return;
+	}
+
+	list = dev->iface->stations;
+	while (*list) {
+		const char *addr = *list++;
+		/* Recently added are as last, add them to the beginning */
+		new_clients = g_list_append(new_clients, g_strdup(addr));
+	}
+
+	old_clients = connman_tethering_get_clients();
+
+	old_length = g_list_length(old_clients);
+	new_length = g_list_length(new_clients);
+
+	if ((old_length + 1) == new_length) {
+		DBG("station added");
+		handle_tethering_clients(new_clients, old_clients, true, true);
+	} else if ((old_length - 1) == new_length) {
+		DBG("station removed");
+		handle_tethering_clients(old_clients, new_clients, false, true);
+	} else {
+		/* This should not happen but handle it anyway */
+		connman_warn("tethering list changed more than one/no change: "
+							"old %d new %d",
+							old_length, new_length);
+		/* add missing new */
+		handle_tethering_clients(new_clients, old_clients, true, false);
+		/* remove ones not in list */
+		handle_tethering_clients(old_clients, new_clients, false,
+									false);
+	}
+
+	g_list_free(old_clients);
+	g_list_free_full(new_clients, g_free);
+}
+
 static void wifi_device_newlink(unsigned int flags, unsigned int change,
 								void *data);
 
@@ -3652,6 +3740,10 @@ static void wifi_device_tether_ok(struct wifi_device *dev)
 		gsupplicant_interface_add_handler(dev->iface,
 			GSUPPLICANT_INTERFACE_PROPERTY_COUNTRY,
 			wifi_device_country_changed, dev);
+	dev->iface_event_id[DEVICE_INTERFACE_EVENT_STATIONS] =
+		gsupplicant_interface_add_handler(dev->iface,
+			GSUPPLICANT_INTERFACE_PROPERTY_STATIONS,
+			wifi_device_stations_changed, dev);
 }
 
 static void wifi_device_tether_8(GSupplicantInterface *iface,
