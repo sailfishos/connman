@@ -4,6 +4,7 @@
  *
  *  Copyright (C) 2007-2013  Intel Corporation. All rights reserved.
  *  Copyright (C) 2018 GlobalLogic. All rights reserved.
+ *  Copyright (C) 2025 Jolla Mobile Ltd
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License version 2 as
@@ -23,12 +24,17 @@
 #ifndef __CONNMAN_TETHERING_H
 #define __CONNMAN_TETHERING_H
 
+#include <connman/service.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-void __connman_tethering_client_register(const char *addr);
-void __connman_tethering_client_unregister(const char *addr);
+void connman_tethering_client_register(const char *addr,
+						enum connman_service_type type,
+						uint8_t version);
+void connman_tethering_client_unregister(const char *addr);
+GList *connman_tethering_get_clients(void);
 
 #ifdef __cplusplus
 }

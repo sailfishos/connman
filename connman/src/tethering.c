@@ -4,6 +4,7 @@
  *
  *  Copyright (C) 2007-2013  Intel Corporation. All rights reserved.
  *  Copyright (C) 2011	ProFUSION embedded systems
+ *  Copyright (C) 2025 Jolla Mobile Ltd
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License version 2 as
@@ -65,6 +66,7 @@ static GHashTable *clients_table;
 
 struct _clients_notify {
 	int id;
+	GHashTable *add;
 	GHashTable *remove;
 } *clients_notify;
 
@@ -82,6 +84,40 @@ struct connman_private_network {
 	char *primary_dns;
 	char *secondary_dns;
 };
+
+struct tethering_client {
+	char *ip;
+	enum connman_service_type type;
+	enum connman_ipconfig_method method;
+	/* For Wifi 2/5, for Bluetooth LMP version 0...11 */
+	uint8_t version;
+};
+
+struct tethering_client *new_tethering_client(const char *ip,
+					enum connman_service_type type,
+					enum connman_ipconfig_method method,
+					uint8_t version)
+{
+	struct tethering_client *client = g_new0(struct tethering_client, 1);
+
+	client->ip = ip ? g_strdup(ip) : g_strdup("");
+	client->type = type;
+	client->method = method;
+	client->version = version;
+
+	return client;
+}
+
+void free_tethering_client(gpointer user_data)
+{
+	struct tethering_client *client = user_data;
+
+	if (!client)
+		return;
+
+	g_free(client->ip);
+	g_free(client);
+}
 
 const char *__connman_tethering_get_bridge(void)
 {
@@ -139,6 +175,78 @@ static void dhcp_server_error(GDHCPServerError error)
 	}
 }
 
+char *parse_unsigned_mac(unsigned char *mac)
+{
+	char *mac_str;
+	size_t len;
+	int i;
+
+	len = strlen((char*)mac);
+	if (len != ETH_ALEN) {
+		DBG("Invalid sized MAC address: %lu", len);
+		return NULL;
+	}
+
+	mac_str = g_strdup_printf("%02X:%02X:%02X:%02X:%02X:%02X",
+				mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+
+	len = strlen(mac_str);
+
+	for (i = 0; i < len; i++)
+		mac_str[i] = g_ascii_tolower(mac_str[i]);
+
+	return mac_str;
+}
+
+static void client_changed(const char *addr);
+static void client_removed(const char *addr);
+
+void lease_added(unsigned char *mac, uint32_t ip)
+{
+	struct in_addr addr = { 0 };
+	struct tethering_client *client;
+	char ipstr[INET_ADDRSTRLEN] = { 0 };
+	char *mac_address = parse_unsigned_mac(mac);
+
+	if (!mac_address) {
+		DBG("invalid MAC %s", (char*)mac);
+		return;
+	}
+
+	client = g_hash_table_lookup(clients_table, mac_address);
+	if (!client) {
+		if (!g_hash_table_contains(clients_table, mac_address))
+			DBG("Lease for unknown MAC %s", mac_address);
+		else
+			DBG("MAC %s has no client info set", mac_address);
+
+		goto out;
+	}
+
+	addr.s_addr = ip;
+	if (!inet_ntop(AF_INET, &addr, ipstr, INET_ADDRSTRLEN)) {
+		connman_warn("Invalid lease for %s", mac_address);
+		goto out;
+	}
+
+	if (!g_strcmp0(client->ip, ipstr) && client->method ==
+						CONNMAN_IPCONFIG_METHOD_DHCP) {
+		DBG("No change in MAC %s IP address", mac_address);
+		goto out;
+	}
+
+	DBG("MAC %s IP %s", mac_address, ipstr);
+
+	g_free(client->ip);
+	client->ip = g_strdup(ipstr);
+	client->method = CONNMAN_IPCONFIG_METHOD_DHCP;
+
+	client_changed(mac_address);
+
+out:
+	g_free(mac_address);
+}
+
 static GDHCPServer *dhcp_server_start(const char *bridge,
 				const char *router, const char *subnet,
 				const char *start_ip, const char *end_ip,
@@ -163,6 +271,7 @@ static GDHCPServer *dhcp_server_start(const char *bridge,
 	g_dhcp_server_set_debug(dhcp_server, dhcp_server_debug, "DHCP server");
 
 	g_dhcp_server_set_lease_time(dhcp_server, lease_time);
+	g_dhcp_server_set_lease_added_cb(dhcp_server, lease_added);
 	g_dhcp_server_set_option(dhcp_server, G_DHCP_SUBNET, subnet);
 	g_dhcp_server_set_option(dhcp_server, G_DHCP_ROUTER, router);
 	g_dhcp_server_set_option(dhcp_server, G_DHCP_DNS_SERVER, dns);
@@ -192,12 +301,15 @@ static void unregister_client(gpointer key,
 					gpointer value, gpointer user_data)
 {
 	const char *addr = key;
-	__connman_tethering_client_unregister(addr);
+	DBG("%s", addr);
+	client_removed(addr);
 }
 
 static void unregister_all_clients(void)
 {
+	DBG("%d clients", g_hash_table_size(clients_table));
 	g_hash_table_foreach(clients_table, unregister_client, NULL);
+	g_hash_table_remove_all(clients_table);
 }
 
 int __connman_tethering_set_enabled(void)
@@ -363,6 +475,36 @@ void __connman_tethering_list_clients(DBusMessageIter *array)
 	g_hash_table_foreach(clients_table, append_client, array);
 }
 
+static void append_client_details(DBusMessageIter *dict, gpointer user_data)
+{
+	struct tethering_client *client = user_data;
+
+	connman_dbus_dict_append_basic(dict, "Address", DBUS_TYPE_STRING,
+						&client->ip);
+	connman_dbus_dict_append_basic(dict, "AddressType", DBUS_TYPE_BYTE,
+						&client->method);
+	connman_dbus_dict_append_basic(dict, "Technology", DBUS_TYPE_BYTE,
+						&client->type);
+	connman_dbus_dict_append_basic(dict, "Version", DBUS_TYPE_BYTE,
+						&client->version);
+
+}
+static void append_client_with_details(gpointer key, gpointer value,
+						gpointer user_data)
+{
+	DBusMessageIter *dict = user_data;
+	struct tethering_client *client = value;
+	const char *addr = key;
+
+	connman_dbus_dict_append_dict(dict, addr, append_client_details,
+									client);
+}
+
+void __connman_tethering_list_clients_details(DBusMessageIter *dict)
+{
+	g_hash_table_foreach(clients_table, append_client_with_details, dict);
+}
+
 static void setup_tun_interface(unsigned int flags, unsigned change,
 		void *data)
 {
@@ -487,7 +629,8 @@ static gboolean client_send_changed(gpointer data)
 	clients_notify->id = 0;
 
 	signal = dbus_message_new_signal(CONNMAN_MANAGER_PATH,
-				CONNMAN_MANAGER_INTERFACE, "TetheringClientsChanged");
+						CONNMAN_MANAGER_INTERFACE,
+						"TetheringClientsChanged");
 	if (!signal)
 		return FALSE;
 
@@ -495,7 +638,7 @@ static gboolean client_send_changed(gpointer data)
 	dbus_message_iter_open_container(&iter, DBUS_TYPE_ARRAY,
 				DBUS_TYPE_STRING_AS_STRING, &array);
 
-	g_hash_table_foreach(clients_table, append_client, &array);
+	g_hash_table_foreach(clients_notify->add, append_client, &array);
 
 	dbus_message_iter_close_container(&iter, &array);
 
@@ -510,6 +653,7 @@ static gboolean client_send_changed(gpointer data)
 	dbus_connection_send(connection, signal, NULL);
 	dbus_message_unref(signal);
 
+	g_hash_table_remove_all(clients_notify->add);
 	g_hash_table_remove_all(clients_notify->remove);
 
 	return FALSE;
@@ -528,14 +672,28 @@ static void client_added(const char *addr)
 	DBG("client %s", addr);
 
 	g_hash_table_remove(clients_notify->remove, addr);
+	g_hash_table_replace(clients_notify->add, g_strdup(addr), NULL);
 
 	client_schedule_changed();
 }
+
+static void client_changed(const char *addr)
+{
+	DBG("client %s", addr);
+
+	g_hash_table_remove(clients_notify->remove, addr);
+	// TODO leases can be added so fast that the client is added & changed
+	g_hash_table_replace(clients_notify->add, g_strdup(addr), NULL);
+
+	client_schedule_changed();
+}
+
 
 static void client_removed(const char *addr)
 {
 	DBG("client %s", addr);
 
+	g_hash_table_remove(clients_notify->add, addr);
 	g_hash_table_replace(clients_notify->remove, g_strdup(addr), NULL);
 
 	client_schedule_changed();
@@ -630,16 +788,25 @@ int __connman_private_network_release(const char *path)
 	return 0;
 }
 
-void __connman_tethering_client_register(const char *addr)
+void connman_tethering_client_register(const char *addr,
+						enum connman_service_type type,
+						uint8_t version)
 {
-	g_hash_table_insert(clients_table, g_strdup(addr), NULL);
+	g_hash_table_insert(clients_table, g_strdup(addr),
+			new_tethering_client(NULL, type,
+				CONNMAN_IPCONFIG_METHOD_UNKNOWN, version));
 	client_added(addr);
 }
 
-void __connman_tethering_client_unregister(const char *addr)
+void connman_tethering_client_unregister(const char *addr)
 {
 	client_removed(addr);
 	g_hash_table_remove(clients_table, addr);
+}
+
+GList *connman_tethering_get_clients(void)
+{
+	return g_hash_table_get_keys(clients_table);
 }
 
 int __connman_tethering_init(void)
@@ -656,9 +823,12 @@ int __connman_tethering_init(void)
 						NULL, remove_private_network);
 
 	clients_table = g_hash_table_new_full(g_str_hash, g_str_equal,
-							g_free, NULL);
+							g_free,
+							free_tethering_client);
 
 	clients_notify = g_new0(struct _clients_notify, 1);
+	clients_notify->add = g_hash_table_new_full(g_str_hash, g_str_equal,
+							g_free, NULL);
 	clients_notify->remove = g_hash_table_new_full(g_str_hash, g_str_equal,
 							g_free, NULL);
 	return 0;
@@ -682,6 +852,7 @@ void __connman_tethering_cleanup(void)
 
 	g_hash_table_destroy(pn_hash);
 
+	g_hash_table_destroy(clients_notify->add);
 	g_hash_table_destroy(clients_notify->remove);
 	g_free(clients_notify);
 	clients_notify = NULL;

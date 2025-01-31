@@ -5,6 +5,7 @@
  *  Copyright (C) 2007-2014  Intel Corporation. All rights reserved.
  *  Copyright (C) 2013-2020  Jolla Ltd. All rights reserved.
  *  Copyright (C) 2020  Open Mobile Platform LLC.
+ *  Copyright (C) 2025 Jolla Mobile Ltd
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License version 2 as
@@ -791,6 +792,7 @@ const char *__connman_tethering_get_bridge(void);
 int __connman_tethering_set_enabled(void);
 void __connman_tethering_set_disabled(void);
 void __connman_tethering_list_clients(DBusMessageIter *array);
+void __connman_tethering_list_clients_details(DBusMessageIter *array);
 
 int __connman_private_network_request(DBusMessage *msg, const char *owner);
 int __connman_private_network_release(const char *path);
