@@ -3,6 +3,7 @@
  *  Connection Manager
  *
  *  Copyright (C) 2007-2014  Intel Corporation. All rights reserved.
+ *  Copyright (C) 2025 Jolla Mobile Ltd
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License version 2 as
@@ -2983,7 +2984,7 @@ static void sta_authorized(GSupplicantInterface *interface,
 	if (!wifi || !wifi->tethering)
 		return;
 
-	__connman_tethering_client_register(addr);
+	connman_tethering_client_register(addr, CONNMAN_SERVICE_TYPE_WIFI, 0);
 }
 
 static void sta_deauthorized(GSupplicantInterface *interface,
@@ -2996,7 +2997,7 @@ static void sta_deauthorized(GSupplicantInterface *interface,
 	if (!wifi || !wifi->tethering)
 		return;
 
-	__connman_tethering_client_unregister(addr);
+	connman_tethering_client_unregister(addr);
 }
 
 static void apply_peer_services(GSupplicantPeer *peer,
