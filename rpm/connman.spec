@@ -234,6 +234,9 @@ cp -a tools/iptables-unit %{buildroot}%{_libdir}/%{name}/tools
 mkdir -p %{buildroot}%{_sysconfdir}/connman/
 cp -a %{SOURCE1} %{buildroot}%{_sysconfdir}/connman/
 
+mkdir -p %{buildroot}%{_sysconfdir}/connman/main.conf.d
+mkdir -p %{buildroot}%{_sysconfdir}/connman/connman-vpn.conf.d
+
 mkdir -p %{buildroot}/%{_unitdir}/multi-user.target.wants
 ln -s ../connman.service %{buildroot}/%{_unitdir}/multi-user.target.wants/connman.service
 ln -s ../connman-vpn.service %{buildroot}/%{_unitdir}/multi-user.target.wants/connman-vpn.service
@@ -280,6 +283,8 @@ systemctl daemon-reload || :
 %{_sbindir}/connmand
 %dir %{_libdir}/%{name}
 %dir %{_libdir}/%{name}/plugins-vpn
+%dir %{_libdir}/%{name}/main.conf.d
+%dir %{_libdir}/%{name}/connman-vpn.conf.d
 %{_prefix}/lib/tmpfiles.d/connman_resolvconf.conf
 %config %{_datadir}/dbus-1/system.d/*.conf
 %{_unitdir}/connman.service
@@ -306,6 +311,8 @@ systemctl daemon-reload || :
 
 %files configs-mer
 %dir %{_sysconfdir}/connman
+%dir %{_sysconfdir}/%{name}/main.conf.d
+%dir %{_sysconfdir}/%{name}/connman-vpn.conf.d
 %config %{_sysconfdir}/connman/main.conf
 %config %{_sysconfdir}/connman/vpn-dbus-access.conf
 
