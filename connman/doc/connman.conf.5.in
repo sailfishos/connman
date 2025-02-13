@@ -14,6 +14,13 @@ is a configuration file for ConnMan. The configuration file is
 optional but it can be used to set up various aspects of ConnMan's
 behavior. The location of the file may be changed through use of
 the \fB\-\-config= \fRargument for \fBconnman\fP(8).
+.P
+.B main.conf.d
+is for configuration files that can be used to add and replace main.conf key
+values. The format is identical to main.conf, suffix has to be .conf for the
+file to be read and the files are processed in alphabetical order. The last
+key value pair in a config file will be used if any earlier key existed in the
+other files.
 .SH "FILE FORMAT"
 .P
 The configuration file consists of sections (groups) of key-value pairs.
