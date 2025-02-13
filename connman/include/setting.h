@@ -3,6 +3,7 @@
  *  Connection Manager
  *
  *  Copyright (C) 2012  Intel Corporation. All rights reserved.
+ *  Copyright (C) 2025  Jolla Mobile Ltd
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License version 2 as

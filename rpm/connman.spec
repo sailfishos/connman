@@ -283,8 +283,6 @@ systemctl daemon-reload || :
 %{_sbindir}/connmand
 %dir %{_libdir}/%{name}
 %dir %{_libdir}/%{name}/plugins-vpn
-%dir %{_libdir}/%{name}/main.conf.d
-%dir %{_libdir}/%{name}/connman-vpn.conf.d
 %{_prefix}/lib/tmpfiles.d/connman_resolvconf.conf
 %config %{_datadir}/dbus-1/system.d/*.conf
 %{_unitdir}/connman.service
