@@ -51,6 +51,16 @@ Methods		dict GetProperties()
 			Returns a sorted list of MAC addresses of clients
 			connected to tethered technologies.
 
+		array{string,dict} GetTetheringClientDetails() [experimental]
+
+			Returns a sorted list of MAC addresses of clients
+			connected to tethered technologies with their details
+			as a dict. IP address as a string "Address", IP address
+			method as byte "AddressType" (ipconfig method),
+			technology type as byte "Technology" (service type) and
+			version of the used technology as byte "Version" (for
+			WLAN the GHz 2/5/6, for Bluetooth LMP version).
+
 		object ConnectProvider(dict provider)	[deprecated]
 
 			Connect to a VPN specified by the given provider
@@ -263,9 +273,11 @@ Signals		TechnologyAdded(object path, dict properties)
 		TetheringClientsChanged(array{string}, array{string}) [experimental]
 
 			This signal indicates a change in the tethering clients.
-			List of all tethering clients currently registered connman is
-			passed via the first array. And a list of tethering clients that
-			have been removed via the second array.
+			List of new tethering clients and clients that acquired
+			or changed IP address that are currently registered in
+			connman are passed via the first array. And a list of
+			tethering clients that have been removed via the
+			second array.
 
 		PropertyChanged(string name, variant value)
 
