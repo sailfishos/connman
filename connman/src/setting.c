@@ -965,9 +965,41 @@ static void read_config_value(GKeyFile *config, const char *key, bool append)
 	g_clear_error(&error);
 }
 
-void __connman_setting_read_config_values(GKeyFile *config, bool append)
+static void read_non_main_config(GKeyFile *config, bool append)
+{
+	GError *error = NULL;
+	char **keys;
+	gsize len;
+
+	if (!config)
+		return;
+
+	keys = g_key_file_get_keys(config, "General", &len, &error);
+	if (!error) {
+		int i;
+		for (i = 0; i < len; i++) {
+			if (!__connman_setting_is_supported_option(keys[i])) {
+				DBG("invalid key %s", keys[i]);
+				continue;
+			}
+
+			DBG("read key %s", keys[i]);
+			read_config_value(config, keys[i], append);
+		}
+	}
+
+	g_clear_error(&error);
+}
+
+void __connman_setting_read_config_values(GKeyFile *config, bool mainconfig,
+								bool append)
 {
 	int i ;
+
+	if (!mainconfig) {
+		read_non_main_config(config, append);
+		return;
+	}
 
 	if (!config) {
 		connman_settings.auto_connect =

@@ -106,7 +106,7 @@ static void check_config(GKeyFile *config, const char *file)
 	g_strfreev(keys);
 }
 
-static int config_init(const char *file, bool append)
+static int config_init(const char *file, bool mainconfig, bool append)
 {
 	GKeyFile *config;
 
@@ -114,7 +114,8 @@ static int config_init(const char *file, bool append)
 	if (config) {
 		DBG("parsing %s", file);
 		check_config(config, file);
-		__connman_setting_read_config_values(config, append);
+		__connman_setting_read_config_values(config, mainconfig,
+									append);
 		g_key_file_unref(config);
 	}
 
@@ -123,7 +124,7 @@ static int config_init(const char *file, bool append)
 
 static int config_read(const char *file)
 {
-	return config_init(file, false);
+	return config_init(file, false, false);
 }
 
 static GMainLoop *main_loop = NULL;
@@ -364,9 +365,9 @@ int main(int argc, char *argv[])
 
 	option = connman_setting_get_string(CONF_OPTION_CONFIG);
 	if (!option)
-		config_init(CONFIGMAINFILE, false);
+		config_init(CONFIGMAINFILE, true, false);
 	else
-		config_init(option, false);
+		config_init(option, true, false);
 
 	fs_err = util_read_config_files_from(CONFIGMAINDIR, CONFIGSUFFIX,
 				NULL, config_read);
