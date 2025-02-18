@@ -427,6 +427,7 @@ static GKeyFile* load_config_data(char **data)
 static bool do_init = true;
 static bool do_cleanup = true;
 static bool do_load = true;
+static bool do_main = true;
 
 static void setting_test_basic0(void)
 {
@@ -440,7 +441,7 @@ static void setting_test_basic0(void)
 
 	if (do_load) {
 		config = load_config_data(config_ok);
-		__connman_setting_read_config_values(config, false);
+		__connman_setting_read_config_values(config, do_main, false);
 	}
 
 	g_assert_true(connman_setting_get_bool(CONF_BG_SCAN));
@@ -576,7 +577,7 @@ static void setting_test_basic1(void)
 	unsigned int *int_values;
 	mode_t mode;
 
-	do_init = do_load = true;
+	do_init = do_load = do_main = true;
 	do_cleanup = false;
 
 	/*
@@ -721,7 +722,7 @@ static void setting_test_defaults0(void)
 
 	if (do_load) {
 		config = load_config_data(config_empty);
-		__connman_setting_read_config_values(config, false);
+		__connman_setting_read_config_values(config, do_main, false);
 	}
 
 	g_assert_true(connman_setting_get_bool(CONF_BG_SCAN));
@@ -838,13 +839,14 @@ static void setting_test_load_confd0(void)
 
 	__connman_setting_init();
 
-	/* Load empty config and then new config */
+	/* Load empty config and then new config as additional one*/
 	setting_test_defaults0();
+	do_main = false;
 	setting_test_basic0();
 
 	__connman_setting_cleanup();
 
-	do_init = do_cleanup = true;
+	do_init = do_cleanup = do_main = true;
 }
 
 static char *conf0[] = {
@@ -897,27 +899,27 @@ static void setting_test_load_confd1(void)
 
 	/* Then empty config and check default values*/
 	config = load_config_data(conf0);
-	__connman_setting_read_config_values(config, false);
+	__connman_setting_read_config_values(config, false, false);
 	g_key_file_unref(config);
 
-	do_load = false;
+	do_load = do_main = false;
 	setting_test_defaults0();
 
 	/* Load configs with one change and check each */
 	config = load_config_data(conf_bool);
-	__connman_setting_read_config_values(config, false);
+	__connman_setting_read_config_values(config, false, false);
 	g_key_file_unref(config);
 
 	g_assert_false(connman_setting_get_bool(CONF_BG_SCAN));
 
 	config = load_config_data(conf_uint);
-	__connman_setting_read_config_values(config, false);
+	__connman_setting_read_config_values(config, false, false);
 	g_key_file_unref(config);
 
 	g_assert_cmpint(connman_timeout_input_request(), ==, 5*1000);
 
 	config = load_config_data(conf_uint_list);
-	__connman_setting_read_config_values(config, false);
+	__connman_setting_read_config_values(config, false, false);
 	g_key_file_unref(config);
 
 	int_values = connman_setting_get_uint_list(CONF_AUTO_CONNECT_TECHS);
@@ -929,14 +931,14 @@ static void setting_test_load_confd1(void)
 
 
 	config = load_config_data(conf_str);
-	__connman_setting_read_config_values(config, false);
+	__connman_setting_read_config_values(config, false, false);
 	g_key_file_unref(config);
 
 	g_assert_cmpstr(connman_setting_get_string(CONF_STORAGE_ROOT), ==, 
 					"/root/temp");
 
 	config = load_config_data(conf_str_list);
-	__connman_setting_read_config_values(config, false);
+	__connman_setting_read_config_values(config, false, false);
 	g_key_file_unref(config);
 
 	str_list = connman_setting_get_string_list(CONF_BLACKLISTED_INTERFACES);
@@ -945,13 +947,26 @@ static void setting_test_load_confd1(void)
 	g_assert_cmpstr(str_list[0], ==, "eth");
 	g_assert_cmpstr(str_list[1], ==, "wlan");
 
+	/* Read a config that has no change to the string lists */
+	config = load_config_data(conf_bool);
+	__connman_setting_read_config_values(config, false, false);
+	g_key_file_unref(config);
+
+	/* Ensure the blacklisted interfaces are not reset to default */
+	str_list = connman_setting_get_string_list(CONF_BLACKLISTED_INTERFACES);
+	g_assert(str_list);
+	g_assert_cmpuint(g_strv_length(str_list), ==, 2);
+	g_assert_cmpstr(str_list[0], ==, "eth");
+	g_assert_cmpstr(str_list[1], ==, "wlan");
+
 	/* Then load the big config and check values */
 	do_load = true;
+	do_main = false;
 	setting_test_basic0();
 
 	__connman_setting_cleanup();
 
-	do_init = do_cleanup = true;
+	do_init = do_cleanup = do_main = true;
 }
 
 static void setting_test_options0(void)
@@ -1102,7 +1117,7 @@ static void setting_test_error0(void)
 {
 	__connman_setting_init();
 
-	__connman_setting_read_config_values(NULL, false);
+	__connman_setting_read_config_values(NULL, true, false);
 
 	g_assert_false(__connman_setting_is_supported_option(NULL));
 	g_assert_false(__connman_setting_is_supported_option(""));
