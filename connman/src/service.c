@@ -2176,7 +2176,7 @@ static void default_changed(void)
 		 * Connect VPN automatically when new default service
 		 * is set and connected, unless new default is VPN
 		 */
-		if (is_connected(service->state) &&
+		if (service->state == CONNMAN_SERVICE_STATE_ONLINE &&
 			service->type != CONNMAN_SERVICE_TYPE_VPN) {
 			DBG("running vpn_auto_connect");
 			vpn_auto_connect();
@@ -5957,6 +5957,12 @@ static gboolean run_vpn_auto_connect(gpointer data) {
 			def_service ? def_service->identifier : "NULL",
 			def_service ? is_connected(def_service->state) : -1);
 		goto out;
+	}
+
+	if (def_service->state != CONNMAN_SERVICE_STATE_ONLINE) {
+		DBG("default service %p/%s not online, wait", def_service,
+						def_service->identifier);
+		return G_SOURCE_CONTINUE;
 	}
 
 	for (list = service_list; list; list = list->next) {
