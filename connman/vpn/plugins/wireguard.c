@@ -668,9 +668,8 @@ static gboolean wg_route_setup_cb(gpointer user_data)
 	family = info->peer.endpoint.addr.sa_family;
 
 	if (!endpoint_to_str(&info->peer, endpoint, INET6_ADDRSTRLEN)) {
-		DBG("Faulty endpoint set, use endpoint_fqdn");
-		memcpy(&endpoint, info->endpoint_fqdn, INET6_ADDRSTRLEN);
-		family = connman_inet_check_ipaddress(info->endpoint_fqdn);
+		connman_warn("Cannot setup WireGuard routes, endpoint failure");
+		return G_SOURCE_REMOVE;
 	}
 
 	wg_for_each_allowedip(&info->peer, allowedip) {
