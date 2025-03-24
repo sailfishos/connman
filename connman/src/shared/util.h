@@ -25,7 +25,7 @@
 
 #include <glib.h>
 #include <stdbool.h>
-#include <inet.h>
+#include <arpa/inet.h>
 
 #define AF_INET_POS 0
 #define AF_INET6_POS 1
