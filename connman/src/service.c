@@ -9211,14 +9211,40 @@ static enum connman_service_security security_from_ident(const char *ident)
 	return __connman_service_string2security(str);
 }
 
+static bool service_default_mdns(enum connman_service_type type)
+{
+	bool val = false;
+
+	switch (type){
+	case CONNMAN_SERVICE_TYPE_ETHERNET:
+	case CONNMAN_SERVICE_TYPE_WIFI:
+		val = connman_setting_get_bool(CONF_DEFAULT_MDNS_CONFIGURATION);
+		break;
+	case CONNMAN_SERVICE_TYPE_BLUETOOTH:
+	case CONNMAN_SERVICE_TYPE_CELLULAR:
+	case CONNMAN_SERVICE_TYPE_GADGET:
+	case CONNMAN_SERVICE_TYPE_GPS:
+	case CONNMAN_SERVICE_TYPE_P2P:
+	case CONNMAN_SERVICE_TYPE_SYSTEM:
+	case CONNMAN_SERVICE_TYPE_UNKNOWN:
+	case CONNMAN_SERVICE_TYPE_VPN:
+		break;
+	}
+
+	return val;
+}
+
 static struct connman_service *service_new(enum connman_service_type type,
 							const char *ident)
 {
 	struct connman_service *service = connman_service_create();
 
+	DBG("%p", service);
+
 	service->identifier = g_strdup(ident);
 	service->path = service_path(ident);
 	service->type = type;
+	service->mdns_config = service_default_mdns(type);
 	service->security = security_from_ident(ident);
 	stats_init(service);
 	return service;
@@ -10048,6 +10074,9 @@ bool __connman_service_create_from_network(struct connman_network *network)
 	index = connman_network_get_index(network);
 
 	if (service->path) {
+		DBG("old (%s) service with path %s",
+					service->new_service ? "new" : "old",
+					service->path);
 		update_from_network(service, network);
 
 		if (service->ipconfig_ipv4)
@@ -10068,6 +10097,7 @@ bool __connman_service_create_from_network(struct connman_network *network)
 	}
 
 	service->type = convert_network_type(network);
+	service->mdns_config = service_default_mdns(service->type);
 
 	auto_connect_types = connman_setting_get_uint_list("DefaultAutoConnectTechnologies");
 	service->autoconnect = false;
