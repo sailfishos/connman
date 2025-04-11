@@ -215,7 +215,7 @@ This package provides Wireguard VPN plugin for connman.
     --enable-blacklist-monitor \
     --enable-clat \
     --with-firewall=iptables \
-    --with-dns-backend=internal
+    --with-dns-backend=systemd-resolved
 
 %make_build
 
@@ -260,11 +260,14 @@ fi
 %define etc_resolv_conf %{_sysconfdir}/resolv.conf
 
 mkdir -p %{connman_run_dir} || :
-if [ -f %{etc_resolv_conf} -a ! -f %{run_resolv_conf} ]; then
-cp %{etc_resolv_conf} %{run_resolv_conf} || :
-fi
+
+# Remove the resolv.conf symlink only when it points to ConnMan resolv.conf
+# systemd-resolved will create the link at boot
+if [ -s %{etc_resolv_conf} ] ; then
+if [ $(readlink %{etc_resolv_conf}) = %{run_resolv_conf} ] ; then
 rm -f %{etc_resolv_conf} || :
-ln -s %{run_resolv_conf} %{etc_resolv_conf} || :
+fi
+fi
 
 systemctl daemon-reload || :
 # Do not restart connman here or network breaks.
@@ -283,7 +286,7 @@ systemctl daemon-reload || :
 %{_sbindir}/connmand
 %dir %{_libdir}/%{name}
 %dir %{_libdir}/%{name}/plugins-vpn
-%{_prefix}/lib/tmpfiles.d/connman_resolvconf.conf
+%exclude %{_prefix}/lib/tmpfiles.d/connman_resolvconf.conf
 %config %{_datadir}/dbus-1/system.d/*.conf
 %{_unitdir}/connman.service
 %{_unitdir}/multi-user.target.wants/connman.service
