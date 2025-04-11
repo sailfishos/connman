@@ -114,6 +114,7 @@ static struct {
 	bool use_gateways_as_timeservers;
 	bool enable_login_manager;
 	bool regdom_follows_timezone;
+	bool default_mdns_configuration;
 	mode_t storage_root_permissions;
 	mode_t storage_dir_permissions;
 	mode_t storage_file_permissions;
@@ -166,6 +167,7 @@ enum option_val {
 	CONF_ENABLE_LOGIN_MANAGER_VAL,
 	CONF_LOCALTIME_VAL,
 	CONF_REGDOM_FOLLOWS_TIMEZONE_VAL,
+	CONF_DEFAULT_MDNS_CONFIGURATION_VAL,
 	CONF_ONLINE_CHECK_INITIAL_INTERVAL_VAL,
 	CONF_ONLINE_CHECK_MAX_INTERVAL_VAL
 };
@@ -295,6 +297,9 @@ struct {
 	{CONF_REGDOM_FOLLOWS_TIMEZONE,
 					CONF_REGDOM_FOLLOWS_TIMEZONE_VAL,
 					CONF_TYPE_BOOL},
+	{CONF_DEFAULT_MDNS_CONFIGURATION,
+					CONF_DEFAULT_MDNS_CONFIGURATION_VAL,
+					CONF_TYPE_BOOL},
 	{CONF_ONLINE_CHECK_INITIAL_INTERVAL,
 					CONF_ONLINE_CHECK_INITIAL_INTERVAL_VAL,
 					CONF_TYPE_INT},
@@ -413,6 +418,9 @@ bool connman_setting_get_bool(const char *key)
 
 	if (g_str_equal(key, CONF_REGDOM_FOLLOWS_TIMEZONE))
 		return connman_settings.regdom_follows_timezone;
+
+	if (g_str_equal(key, CONF_DEFAULT_MDNS_CONFIGURATION))
+		return connman_settings.default_mdns_configuration;
 
 	return false;
 }
@@ -770,6 +778,9 @@ static void read_config_value(GKeyFile *config, const char *key, bool append)
 		break;
 	case CONF_REGDOM_FOLLOWS_TIMEZONE_VAL:
 		bool_ptr = &connman_settings.regdom_follows_timezone;
+		break;
+	case CONF_DEFAULT_MDNS_CONFIGURATION_VAL:
+		bool_ptr = &connman_settings.default_mdns_configuration;
 		break;
 
 	/* str */
