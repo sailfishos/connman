@@ -66,7 +66,8 @@ endif
 #endif
 
 shared_sources = src/shared/util.h src/shared/util.c \
-		src/shared/arp.h src/shared/arp.c
+		src/shared/arp.h src/shared/arp.c src/shared/dns.h \
+		src/shared/dns.c
 
 if DATAFILES
 
