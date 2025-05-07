@@ -418,6 +418,12 @@ int __connman_tethering_set_enabled(void)
 		DBG("Cannot setup IPv6 prefix delegation %d/%s", err,
 			strerror(-err));
 
+	if (connman_setting_get_bool(CONF_TETHERING_MDNS_CONFIGURATION)) {
+		err = __connman_dnsproxy_set_mdns(index, true);
+		if (err)
+			connman_warn("Cannot enable mDNS for tethering");
+	}
+
 	DBG("tethering started");
 
 	return 0;
@@ -431,6 +437,10 @@ void __connman_tethering_set_disabled(void)
 
 	if (__sync_fetch_and_sub(&tethering_enabled, 1) != 1)
 		return;
+
+	/* Ignore errors as interface is being put down */
+	if (connman_setting_get_bool(CONF_TETHERING_MDNS_CONFIGURATION))
+		__connman_dnsproxy_set_mdns(index, false);
 
 	unregister_all_clients();
 
