@@ -115,6 +115,7 @@ static struct {
 	bool enable_login_manager;
 	bool regdom_follows_timezone;
 	bool default_mdns_configuration;
+	bool tethering_mdns_configuration;
 	mode_t storage_root_permissions;
 	mode_t storage_dir_permissions;
 	mode_t storage_file_permissions;
@@ -168,6 +169,7 @@ enum option_val {
 	CONF_LOCALTIME_VAL,
 	CONF_REGDOM_FOLLOWS_TIMEZONE_VAL,
 	CONF_DEFAULT_MDNS_CONFIGURATION_VAL,
+	CONF_TETHERING_MDNS_CONFIGURATION_VAL,
 	CONF_ONLINE_CHECK_INITIAL_INTERVAL_VAL,
 	CONF_ONLINE_CHECK_MAX_INTERVAL_VAL
 };
@@ -300,6 +302,9 @@ struct {
 	{CONF_DEFAULT_MDNS_CONFIGURATION,
 					CONF_DEFAULT_MDNS_CONFIGURATION_VAL,
 					CONF_TYPE_BOOL},
+	{CONF_TETHERING_MDNS_CONFIGURATION,
+					CONF_TETHERING_MDNS_CONFIGURATION_VAL,
+					CONF_TYPE_BOOL},
 	{CONF_ONLINE_CHECK_INITIAL_INTERVAL,
 					CONF_ONLINE_CHECK_INITIAL_INTERVAL_VAL,
 					CONF_TYPE_INT},
@@ -421,6 +426,9 @@ bool connman_setting_get_bool(const char *key)
 
 	if (g_str_equal(key, CONF_DEFAULT_MDNS_CONFIGURATION))
 		return connman_settings.default_mdns_configuration;
+
+	if (g_str_equal(key, CONF_TETHERING_MDNS_CONFIGURATION))
+		return connman_settings.tethering_mdns_configuration;
 
 	return false;
 }
@@ -781,6 +789,9 @@ static void read_config_value(GKeyFile *config, const char *key, bool append)
 		break;
 	case CONF_DEFAULT_MDNS_CONFIGURATION_VAL:
 		bool_ptr = &connman_settings.default_mdns_configuration;
+		break;
+	case CONF_TETHERING_MDNS_CONFIGURATION_VAL:
+		bool_ptr = &connman_settings.tethering_mdns_configuration;
 		break;
 
 	/* str */
