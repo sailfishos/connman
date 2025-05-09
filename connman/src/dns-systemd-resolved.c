@@ -31,10 +31,12 @@
 #include <glib.h>
 #include <connman/dbus.h>
 
+#include "shared/dns.h"
 #include "connman.h"
 
 #define SYSTEMD_RESOLVED_SERVICE "org.freedesktop.resolve1"
 #define SYSTEMD_RESOLVED_PATH "/org/freedesktop/resolve1"
+#define SYSTEMD_RESOLVED_SERVER "127.0.0.53"
 
 struct resolved_dbus_data {
 	int index;
@@ -375,14 +377,34 @@ int __connman_dnsproxy_append(int index, const char *domain,
 
 int __connman_dnsproxy_add_listener(int index)
 {
-	DBG("");
+	int lo_index;
+	int err;
 
-	return -ENXIO;
+	DBG("index %d", index);
+
+	err = dns_add_listener(index, DNS_IPPROTO_UDP, true);
+	if (err)
+		return err;
+
+	lo_index = connman_inet_ifindex("lo");
+	err = dns_create_server(lo_index, "local", SYSTEMD_RESOLVED_SERVER,
+								IPPROTO_UDP);
+	if (err)
+		return err;
+
+	err = dns_enable_server(lo_index, SYSTEMD_RESOLVED_SERVER, IPPROTO_UDP,
+								true);
+	if (err)
+		return err;
+
+	return 0;
 }
 
 void __connman_dnsproxy_remove_listener(int index)
 {
 	DBG("");
+
+	dns_remove_listener(index);
 }
 
 static int setup_resolved(void)
@@ -779,6 +801,10 @@ int __connman_dnsproxy_init(void)
 	if (!interface_hash)
 		return -ENOMEM;
 
+	ret = dns_init(NULL);
+	if (ret)
+		return ret;
+
 	ret = connman_notifier_register(&resolved_notifier);
 	if (ret < 0)
 		DBG("cannot register notifier");
@@ -821,4 +847,6 @@ void __connman_dnsproxy_cleanup(void)
 		dbus_connection_unref(connection);
 		connection = NULL;
 	}
+
+	dns_cleanup();
 }
