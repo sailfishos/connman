@@ -12,7 +12,7 @@ Requires:   wpa_supplicant >= 0.7.1
 Requires:   ofono
 Requires:   pacrunner
 Requires:   connman-configs
-Requires:   systemd
+Requires:   systemd >= 238+git25
 Requires:   iptables >= 1.6.1+git2
 Requires:   iptables-ipv6 >= 1.6.1+git2
 Requires:   libgofono >= 2.0.0
