@@ -421,6 +421,11 @@ char **connman_setting_get_string_list(const char *key)
 	return NULL;
 }
 
+bool connman_setting_get_bool(const char *key)
+{
+	return false;
+}
+
 /* End dummies */
 
 static gchar* setup_test_directory()
