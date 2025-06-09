@@ -189,8 +189,10 @@ static gboolean str_has_ignore_prefix(const gchar* str)
 		return false;
 
 	for (i = 0; excludes[i]; i++) {
-		if (g_str_has_prefix(str, excludes[i]))
+		if (g_str_has_prefix(str, excludes[i])) {
+			DBG("ignore str \"%s\", prefix %s", str, excludes[i]);
 			return true;
+		}
 	}
 
 	return false;
@@ -212,8 +214,10 @@ static gboolean str_contains_ignore_prefix(const gchar* str)
 		return false;
 
 	for (i = 0; excludes[i]; i++) {
-		if (g_strrstr(str, excludes[i]))
+		if (g_strrstr(str, excludes[i])) {
+			DBG("ignore str \"%s\", prefix %s", str, excludes[i]);
 			return true;
+		}
 	}
 
 	return false;
@@ -1362,10 +1366,15 @@ static gchar** get_default_tables()
 
 int __connman_iptables_save_all()
 {
-	gchar **tables = get_default_tables();
-
+	gchar **tables;
 	gint i = 0;
 
+	if (connman_setting_get_bool(CONF_IPTABLES_EXT_RUNTIME_ONLY)) {
+		DBG("runtime only mode: iptables saving disabled");
+		return 0;
+	}
+
+	tables = get_default_tables();
 	if (!tables || !g_strv_length(tables)) {
 		g_strfreev(tables);
 		return 1;
@@ -1383,9 +1392,15 @@ int __connman_iptables_save_all()
 
 int __connman_iptables_restore_all()
 {
-	gchar **tables = get_default_tables();
+	gchar **tables;
 	gint i = 0;
 
+	if (connman_setting_get_bool(CONF_IPTABLES_EXT_RUNTIME_ONLY)) {
+		DBG("runtime only mode: iptables restore disabled");
+		return 0;
+	}
+
+	tables = get_default_tables();
 	if (!tables || !g_strv_length(tables)) {
 		g_strfreev(tables);
 		return 1;
