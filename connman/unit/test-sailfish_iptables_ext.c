@@ -416,6 +416,10 @@ DBusConnection *connman_dbus_get_connection(void)
 	return NULL;
 }
 
+char **connman_setting_get_string_list(const char *key)
+{
+	return NULL;
+}
 
 /* End dummies */
 
