@@ -71,6 +71,7 @@ extern "C" {
 #define CONF_TETHERING_MDNS_CONFIGURATION    "TetheringmDNSConfiguration"
 /* Only for sailfish_iptables_ext.c */
 #define CONF_IPTABLES_PREFIXES_TO_EXCLUDE    "IptablesPrefixesToExclude"
+#define CONF_IPTABLES_EXT_RUNTIME_ONLY       "IptablesExtRuntimeOnly"
 
 #define CONF_ONLINE_CHECK_INITIAL_INTERVAL   "OnlineCheckInitialInterval"
 #define CONF_ONLINE_CHECK_MAX_INTERVAL       "OnlineCheckMaxInterval"
