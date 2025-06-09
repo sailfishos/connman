@@ -86,6 +86,7 @@ static struct {
 	char **blacklisted_interfaces;
 	char **tethering_technologies;
 	char **dont_bring_down_at_startup;
+	char **iptables_prefixes_to_exclude;
 	char *ipv6_status_url;
 	char *ipv4_status_url;
 	char *tethering_subnet_block;
@@ -170,6 +171,7 @@ enum option_val {
 	CONF_REGDOM_FOLLOWS_TIMEZONE_VAL,
 	CONF_DEFAULT_MDNS_CONFIGURATION_VAL,
 	CONF_TETHERING_MDNS_CONFIGURATION_VAL,
+	CONF_IPTABLES_PREFIXES_TO_EXCLUDE_VAL,
 	CONF_ONLINE_CHECK_INITIAL_INTERVAL_VAL,
 	CONF_ONLINE_CHECK_MAX_INTERVAL_VAL
 };
@@ -305,6 +307,9 @@ struct {
 	{CONF_TETHERING_MDNS_CONFIGURATION,
 					CONF_TETHERING_MDNS_CONFIGURATION_VAL,
 					CONF_TYPE_BOOL},
+	{CONF_IPTABLES_PREFIXES_TO_EXCLUDE,
+					CONF_IPTABLES_PREFIXES_TO_EXCLUDE_VAL,
+					CONF_TYPE_CHARSTR},
 	{CONF_ONLINE_CHECK_INITIAL_INTERVAL,
 					CONF_ONLINE_CHECK_INITIAL_INTERVAL_VAL,
 					CONF_TYPE_INT},
@@ -466,6 +471,9 @@ char **connman_setting_get_string_list(const char *key)
 
 	if (g_str_equal(key, CONF_DONT_BRING_DOWN_AT_STARTUP))
 		return connman_settings.dont_bring_down_at_startup;
+
+	if (g_str_equal(key, CONF_IPTABLES_PREFIXES_TO_EXCLUDE))
+		return connman_settings.iptables_prefixes_to_exclude;
 
 	return NULL;
 }
@@ -846,6 +854,9 @@ static void read_config_value(GKeyFile *config, const char *key, bool append)
 	case CONF_DISABLE_PLUGINS_VAL:
 		list_cb = append_noplugin;
 		break;
+	case CONF_IPTABLES_PREFIXES_TO_EXCLUDE_VAL:
+		str_list_ptr = &connman_settings.iptables_prefixes_to_exclude;
+		break;
 
 	/* int */
 	case CONF_TIMEOUT_INPUTREQ_VAL:
@@ -1187,6 +1198,7 @@ void __connman_setting_cleanup()
 	g_strfreev(connman_settings.blacklisted_interfaces);
 	g_strfreev(connman_settings.tethering_technologies);
 	g_strfreev(connman_settings.dont_bring_down_at_startup);
+	g_strfreev(connman_settings.iptables_prefixes_to_exclude);
 
 	g_free(connman_settings.ipv6_status_url);
 	g_free(connman_settings.ipv4_status_url);
