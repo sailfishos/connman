@@ -52,6 +52,7 @@
 #include <linux/netfilter/xt_connmark.h>
 
 #include <iptables_ext.h>
+#include <setting.h>
 
 #define INFO(fmt,arg...)			connman_info(fmt, ## arg)
 #define ERR(fmt,arg...)				connman_error(fmt, ## arg)
@@ -172,20 +173,50 @@ GString* iptables_get_file_contents(const gchar* fpath)
 	return contents;
 }
 
-static gboolean str_has_connman_prefix(const gchar* str)
+static gboolean str_has_ignore_prefix(const gchar* str)
 {
-	if(!str)
+	char **excludes;
+	int i;
+
+	if (!str)
 		return false;
 
-	return g_str_has_prefix(str,"connman-");
+	if (g_str_has_prefix(str,"connman-"))
+		return true;
+
+	excludes = connman_setting_get_string_list("IptablesPrefixesToExclude");
+	if (!excludes)
+		return false;
+
+	for (i = 0; excludes[i]; i++) {
+		if (g_str_has_prefix(str, excludes[i]))
+			return true;
+	}
+
+	return false;
 }
 
-static gboolean str_contains_connman(const gchar* str)
+static gboolean str_contains_ignore_prefix(const gchar* str)
 {
-	if(!str)
+	char **excludes;
+	int i;
+
+	if (!str)
 		return false;
 
-	return g_strrstr(str, "connman-") ? true : false;
+	if (g_strrstr(str, "connman-"))
+		return true;
+
+	excludes = connman_setting_get_string_list("IptablesPrefixesToExclude");
+	if (!excludes)
+		return false;
+
+	for (i = 0; excludes[i]; i++) {
+		if (g_strrstr(str, excludes[i]))
+			return true;
+	}
+
+	return false;
 }
 
 typedef struct output_capture_data {
@@ -751,7 +782,7 @@ static int iptables_save_table(const char *fpath, GString** output,
 	for (chain = iptc_first_chain(h); chain; chain = iptc_next_chain(h)) {
 
 		// Skip chains with connman prefix
-		if(str_has_connman_prefix(chain))
+		if(str_has_ignore_prefix(chain))
 			continue;
 
 		g_string_append_printf(line,":%s ", chain);
@@ -772,7 +803,7 @@ static int iptables_save_table(const char *fpath, GString** output,
 		const struct ipt_entry *e = NULL;
 
 		// Skip chains with connman prefix
-		if(str_has_connman_prefix(chain))
+		if(str_has_ignore_prefix(chain))
 			continue;
 
 		/* Dump out rules */
@@ -820,7 +851,7 @@ static int iptables_clear_table(const char *table_name)
 	for (chain = iptc_first_chain(h); chain; chain = iptc_next_chain(h)) {
 
 		// Skip chains with connman prefix
-		if (str_has_connman_prefix(chain))
+		if (str_has_ignore_prefix(chain))
 			continue;
 
 		if (!iptc_flush_entries(chain,h))
@@ -905,7 +936,7 @@ static int iptables_parse_policy(const gchar* table_name, const gchar* policy)
 	if (tokens && g_strv_length(tokens) == policy_tokens) {
 
 		// Check chain for connman prefix
-		if(str_has_connman_prefix(tokens[0]))
+		if(str_has_ignore_prefix(tokens[0]))
 			goto out;
 
 		gchar** counter_tokens = g_strsplit_set(tokens[2], "[:]", -1);
@@ -1019,8 +1050,8 @@ static int iptables_parse_rule(const gchar* table_name, gchar* rule)
 	/* Discard all rules that have prefix "connman-" in chain name or
 	 * target name. Chain = token[1], target = last token.
 	 */
-	if (str_has_connman_prefix(argv[1]) ||
-		str_has_connman_prefix(argv[argc - 1])) {
+	if (str_has_ignore_prefix(argv[1]) ||
+		str_has_ignore_prefix(argv[argc - 1])) {
 		DBG("Skipping connman rule \"%s\"", rule);
 		rval = 0; // Not an error situation
 		goto out;
@@ -1392,7 +1423,7 @@ int connman_iptables_new_chain(const char *table_name,
 
 	DBG("%s %s", table_name, chain);
 
-	if (str_has_connman_prefix(chain))
+	if (str_has_ignore_prefix(chain))
 		return -EINVAL;
 
 	return __connman_iptables_new_chain(AF_INET, table_name, chain);
@@ -1412,7 +1443,7 @@ int connman_iptables_delete_chain(const char *table_name,
 
 	DBG("%s %s", table_name, chain);
 
-	if (str_has_connman_prefix(chain))
+	if (str_has_ignore_prefix(chain))
 		return -EINVAL;
 
 	return __connman_iptables_delete_chain(AF_INET, table_name, chain);
@@ -1426,7 +1457,7 @@ int connman_iptables_flush_chain(const char *table_name,
 
 	DBG("%s %s", table_name, chain);
 
-	if (str_has_connman_prefix(chain))
+	if (str_has_ignore_prefix(chain))
 		return -EINVAL;
 
 	return __connman_iptables_flush_chain(AF_INET, table_name, chain);
@@ -1458,7 +1489,8 @@ int connman_iptables_insert(const char *table_name,
 
 	DBG("%s %s %s", table_name, chain, rule_spec);
 
-	if (str_has_connman_prefix(chain) || str_contains_connman(rule_spec))
+	if (str_has_ignore_prefix(chain) ||
+					str_contains_ignore_prefix(rule_spec))
 		return -EINVAL;
 
 	return __connman_iptables_insert(AF_INET, table_name, chain, rule_spec);
@@ -1474,7 +1506,8 @@ int connman_iptables_append(const char *table_name,
 
 	DBG("%s %s %s", table_name, chain, rule_spec);
 
-	if (str_has_connman_prefix(chain) || str_contains_connman(rule_spec))
+	if (str_has_ignore_prefix(chain) ||
+					str_contains_ignore_prefix(rule_spec))
 		return -EINVAL;
 
 	return __connman_iptables_append(AF_INET, table_name, chain, rule_spec);
@@ -1490,7 +1523,8 @@ int connman_iptables_delete(const char *table_name,
 
 	DBG("%s %s %s", table_name, chain, rule_spec);
 
-	if (str_has_connman_prefix(chain) || str_contains_connman(rule_spec))
+	if (str_has_ignore_prefix(chain) ||
+					str_contains_ignore_prefix(rule_spec))
 		return -EINVAL;
 
 	return __connman_iptables_delete(AF_INET, table_name, chain, rule_spec);
@@ -1516,7 +1550,7 @@ int connman_iptables_change_policy(const char *table_name,
 
 	DBG("%s %s %s", table_name, chain, policy);
 
-	if (str_has_connman_prefix(chain))
+	if (str_has_ignore_prefix(chain))
 		return -EINVAL;
 
 	return __connman_iptables_change_policy(AF_INET, table_name, chain, policy);
