@@ -30,6 +30,7 @@
 #include <stdarg.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <sys/file.h>
 
 #include <connman/log.h>
 
@@ -343,4 +344,67 @@ int util_read_config_files_from(const char *path, const char *suffix,
 		g_list_free_full(files, g_free);
 
 	return 0;
+}
+
+int util_lock_file(int *lock_fd, const char *lock_path)
+{
+	if (!lock_path)
+		return -EINVAL;
+
+	if (g_file_test(lock_path, G_FILE_TEST_IS_DIR)) {
+		connman_error("cannot lock directory path %s", lock_path);
+		return -EISDIR;
+	}
+
+	errno = 0;
+
+	*lock_fd = open(lock_path, O_CREAT|O_WRONLY, S_IRUSR|S_IWUSR);
+	if (*lock_fd < 0) {
+		connman_error("cannot create lock file %s: %d/%s", lock_path,
+							errno, strerror(errno));
+		return -EIO;
+	}
+
+	if (flock(*lock_fd, LOCK_EX)) {
+		connman_error("cannot create lock for %s: %d/%s", lock_path,
+							errno, strerror(errno));
+
+		if (close(*lock_fd))
+			connman_warn("cannot close non-locked file %s",
+								lock_path);
+
+		*lock_fd = -1;
+		return -ENOLCK;
+	}
+
+	return 0;
+}
+
+bool util_unlock_file(int *lock_fd)
+{
+	int lock;
+	bool ret = true;
+
+	if (!lock_fd || *lock_fd < 0)
+		return false;
+
+	errno = 0;
+	lock = *lock_fd;
+	*lock_fd = -1;
+
+	if (flock(lock, LOCK_UN)) {
+		connman_warn("cannot release lock on fd %d: %d/%s", lock, errno,
+							strerror(errno));
+		ret = false;
+	}
+
+	errno = 0;
+
+	if (close(lock)) {
+		connman_error("cannot close lockfile fd %d: %d/%s", lock, errno,
+							strerror(errno));
+		ret = false;
+	}
+
+	return ret;
 }
