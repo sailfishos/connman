@@ -811,6 +811,7 @@ static void read_config_value(GKeyFile *config, const char *key, bool append)
 		break;
 	case CONF_IPTABLES_EXT_RUNTIME_ONLY_VAL:
 		bool_ptr = &connman_settings.iptables_ext_runtime_only;
+		break;
 
 	/* str */
 	case CONF_STATUS_URL_IPV4_VAL:
