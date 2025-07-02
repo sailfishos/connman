@@ -53,6 +53,7 @@
 
 #include <iptables_ext.h>
 #include <setting.h>
+#include "src/shared/util.h"
 
 #define INFO(fmt,arg...)			connman_info(fmt, ## arg)
 #define ERR(fmt,arg...)				connman_error(fmt, ## arg)
@@ -839,6 +840,8 @@ static int iptables_clear_table(const char *table_name)
 	const char *chain = NULL;
 	gint rval = 0;
 	gint table_result = iptables_check_table(table_name);
+	int lock_fd;
+	int err;
 
 	switch (table_result) {
 	case 0:
@@ -862,8 +865,17 @@ static int iptables_clear_table(const char *table_name)
 			rval = 1;
 	}
 
-	if (!iptc_commit(h))
+
+	err = util_lock_file(&lock_fd, XT_LOCK_NAME);
+	if (err) {
+		DBG("Getting iptables lock failed: %d/%s",
+							errno, strerror(errno));
 		rval = 1;
+	} else if (!iptc_commit(h)) {
+		rval = 1;
+	}
+
+	util_unlock_file(&lock_fd);
 
 	if (h)
 		iptc_free(h);
@@ -878,6 +890,8 @@ static int iptables_iptc_set_policy(const gchar* table_name,
 	gint rval = 0;
 	struct xtc_handle *h = NULL;
 	struct xt_counters counters = {0};
+	int lock_fd;
+	int err;
 
 	if (!(table_name && *table_name && chain && *chain && policy &&
 		*policy))
@@ -913,11 +927,18 @@ static int iptables_iptc_set_policy(const gchar* table_name,
 		goto out;
 	}
 
-	if (!iptc_commit(h)) {
+	err = util_lock_file(&lock_fd, XT_LOCK_NAME);
+	if (err) {
+		DBG("Getting iptables lock failed: %d/%s",
+							errno, strerror(errno));
+		rval = 1;
+	} else if (!iptc_commit(h)) {
 		ERR("iptables_iptc_set_policy() commit error %s",
 			iptc_strerror(errno));
 		rval = 1;
 	}
+
+	util_unlock_file(&lock_fd);
 
 out:
 	if (h)
