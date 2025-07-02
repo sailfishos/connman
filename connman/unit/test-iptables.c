@@ -409,6 +409,20 @@ int setsockopt(int sockfd, int level, int optname, const void *optval,
 
 /* End of socket dummies */
 
+/* util dummies */
+
+int util_lock_file(int *lock_fd, const char *lock_path)
+{
+	return 0;
+}
+
+bool util_unlock_file(int *lock_fd)
+{
+	return true;
+}
+
+/* End of util dummies */
+
 /* End of dummies */
 
 static void iptables_test_basic0()
