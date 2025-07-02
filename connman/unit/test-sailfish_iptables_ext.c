@@ -426,6 +426,16 @@ bool connman_setting_get_bool(const char *key)
 	return false;
 }
 
+int util_lock_file(int *lock_fd, const char *lock_path)
+{
+	return 0;
+}
+
+bool util_unlock_file(int *lock_fd)
+{
+	return true;
+}
+
 /* End dummies */
 
 static gchar* setup_test_directory()
