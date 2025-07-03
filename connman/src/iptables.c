@@ -2312,15 +2312,14 @@ static int iptables_replace(struct connman_iptables *table,
 
 	err = util_lock_file(&table->lock_fd, XT_LOCK_NAME);
 	if (err) {
-		DBG("Getting iptables lock failed.");
-		if (err == -ENOLCK)
-			DBG("Timeout not implemented - fail miserably");
-
+		DBG("Getting iptables lock failed: %d/%s",
+							errno, strerror(errno));
 		return -EINVAL;
 	}
 
 	err = setsockopt(table->ipt_sock, level, optname,
-				(level == IPPROTO_IP ? r->r : r->r6), optlen);
+				(level == IPPROTO_IP ?
+					(void*)r->r : (void*)r->r6), optlen);
 
 	util_unlock_file(&table->lock_fd);
 
