@@ -438,15 +438,16 @@ void __connman_tethering_set_disabled(void)
 	if (__sync_fetch_and_sub(&tethering_enabled, 1) != 1)
 		return;
 
-	/* Ignore errors as interface is being put down */
-	if (connman_setting_get_bool(CONF_TETHERING_MDNS_CONFIGURATION))
-		__connman_dnsproxy_set_mdns(index, false);
-
 	unregister_all_clients();
 
 	__connman_ipv6pd_cleanup();
 
 	index = connman_inet_ifindex(BRIDGE_NAME);
+
+	/* Ignore errors as interface is being put down */
+	if (connman_setting_get_bool(CONF_TETHERING_MDNS_CONFIGURATION))
+		__connman_dnsproxy_set_mdns(index, false);
+
 	__connman_dnsproxy_remove_listener(index);
 
 	__connman_nat_disable(BRIDGE_NAME);

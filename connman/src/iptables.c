@@ -148,6 +148,8 @@ static const char *hooknames[] = {
 #define LABEL_RETURN  "RETURN"
 
 #define XT_OPTION_OFFSET_SCALE 256
+/* TODO: Bad way, this is defined in iptables at buildtime */
+#define XT_LOCK_NAME "/run/xtables.lock"
 
 struct connman_iptables_entry {
 	int type;
@@ -163,6 +165,7 @@ struct connman_iptables {
 	int type;
 	char *name;
 	int ipt_sock;
+	int lock_fd;
 
 	struct ipt_getinfo *info;
 	struct ipt_get_entries *blob_entries;
@@ -2282,27 +2285,43 @@ static int iptables_replace(struct connman_iptables *table,
 					struct iptables_replace *r)
 {
 	int err;
+	int level;
+	int optname;
+	socklen_t optlen;
 
 	switch (r->type) {
 	case AF_INET:
 		if (!r->r)
 			return -EINVAL;
 
-		err = setsockopt(table->ipt_sock, IPPROTO_IP,
-				IPT_SO_SET_REPLACE, r->r,
-				sizeof(*r->r) + r->r->size);
+		level = IPPROTO_IP;
+		optname = IPT_SO_SET_REPLACE;
+		optlen = sizeof(*r->r) + r->r->size;
 		break;
 	case AF_INET6:
 		if (!r->r6)
 			return -EINVAL;
 
-		err = setsockopt(table->ipt_sock, IPPROTO_IPV6,
-				IP6T_SO_SET_REPLACE, r->r6,
-				sizeof(*r->r6) + r->r6->size);
+		level = IPPROTO_IPV6;
+		optname = IP6T_SO_SET_REPLACE;
+		optlen = sizeof(*r->r6) + r->r6->size;
 		break;
 	default:
 		return -EINVAL;
 	}
+
+	err = util_lock_file(&table->lock_fd, XT_LOCK_NAME);
+	if (err) {
+		DBG("Getting iptables lock failed: %d/%s",
+							errno, strerror(errno));
+		return -EINVAL;
+	}
+
+	err = setsockopt(table->ipt_sock, level, optname,
+				(level == IPPROTO_IP ?
+					(void*)r->r : (void*)r->r6), optlen);
+
+	util_unlock_file(&table->lock_fd);
 
 	if (err < 0)
 		return -errno;
@@ -2330,8 +2349,19 @@ static int iptables_add_counters(struct connman_iptables *table,
 		return -EINVAL;
 	}
 
+	err = util_lock_file(&table->lock_fd, XT_LOCK_NAME);
+	if (err) {
+		DBG("Getting iptables lock failed.");
+		if (err == -ENOLCK)
+			DBG("Timeout not implemented - fail miserably");
+
+		return -EINVAL;
+	}
+
 	err = setsockopt(table->ipt_sock, level, optname, c,
 		sizeof(*c) + sizeof(struct xt_counters) * c->num_counters);
+
+	util_unlock_file(&table->lock_fd);
 
 	if (err < 0)
 		return -errno;

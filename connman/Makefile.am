@@ -681,7 +681,7 @@ if XTABLES
 noinst_PROGRAMS += tools/iptables-test tools/iptables-unit
 
 tools_iptables_test_SOURCES = $(backtrace_sources) src/log.c src/iptables.c \
-				tools/iptables-test.c
+				tools/iptables-test.c src/shared/util.c
 tools_iptables_test_LDADD = @GLIB_LIBS@ @XTABLES_LIBS@ -ldl
 
 tools_iptables_unit_CFLAGS = @DBUS_CFLAGS@ @GLIB_CFLAGS@ @XTABLES_CFLAGS@ \
@@ -698,7 +698,7 @@ tools_iptables_unit_LDADD = @GLIB_LIBS@ @DBUS_LIBS@ @XTABLES_LIBS@ @LIBIPTC_LIBS
 
 tools_ip6tables_test_SOURCES = $(backtrace_sources) src/log.c \
 		src/inotify.c src/iptables.c tools/ip6tables-test.c \
-		src/error.c src/dbus.c
+		src/error.c src/dbus.c src/shared/util.c
 tools_ip6tables_test_LDADD = gdbus/libgdbus-internal.la @GLIB_LIBS@ \
 		@XTABLES_LIBS@ @LIBIPTC_LIBS@ @DBUS_LIBS@ -ldl
 
