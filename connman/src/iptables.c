@@ -2286,6 +2286,7 @@ static int iptables_replace(struct connman_iptables *table,
 	int level;
 	int optname;
 	socklen_t optlen;
+	void *opt;
 
 	switch (r->type) {
 	case AF_INET:
@@ -2295,6 +2296,7 @@ static int iptables_replace(struct connman_iptables *table,
 		level = IPPROTO_IP;
 		optname = IPT_SO_SET_REPLACE;
 		optlen = sizeof(*r->r) + r->r->size;
+		opt = r->r;
 		break;
 	case AF_INET6:
 		if (!r->r6)
@@ -2303,6 +2305,7 @@ static int iptables_replace(struct connman_iptables *table,
 		level = IPPROTO_IPV6;
 		optname = IP6T_SO_SET_REPLACE;
 		optlen = sizeof(*r->r6) + r->r6->size;
+		opt = r->r6;
 		break;
 	default:
 		return -EINVAL;
@@ -2315,9 +2318,7 @@ static int iptables_replace(struct connman_iptables *table,
 		return -EINVAL;
 	}
 
-	err = setsockopt(table->ipt_sock, level, optname,
-				(level == IPPROTO_IP ?
-					(void*)r->r : (void*)r->r6), optlen);
+	err = setsockopt(table->ipt_sock, level, optname, opt, optlen);
 
 	util_unlock_file(&table->lock_fd);
 
