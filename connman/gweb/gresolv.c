@@ -828,7 +828,7 @@ static int connect_udp_channel(struct resolv_nameserver *nameserver)
 	 * bind the socket on any interface.
 	 */
 	if (nameserver->resolv->index > 0 &&
-			strncmp(nameserver->address, "127.0.0.1", 9) != 0) {
+			strncmp(nameserver->address, DNS_BACKEND_V4, 9) != 0) {
 		char interface[IF_NAMESIZE];
 
 		memset(interface, 0, IF_NAMESIZE);
@@ -1063,8 +1063,13 @@ guint g_resolv_lookup_hostname(GResolv *resolv, const char *hostname,
 				g_resolv_add_nameserver(resolv, buf, 53, 0);
 		}
 
-		if (!resolv->nameserver_list)
-			g_resolv_add_nameserver(resolv, "127.0.0.1", 53, 0);
+		if (!resolv->nameserver_list) {
+			g_resolv_add_nameserver(resolv, DNS_BACKEND_V4, 53, 0);
+/* systemd-resolved listens only in one address, use IPv6 with internal DNS */
+#ifndef SYSTEMD_RESOLVED_DNS_BACKEND
+			g_resolv_add_nameserver(resolv, DNS_BACKEND_V6, 53, 0);
+#endif
+		}
 	}
 
 	lookup = g_try_new0(struct resolv_lookup, 1);
