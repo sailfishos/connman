@@ -2451,11 +2451,20 @@ static int create_listener(struct dns_listener_data *ifdata,
 
 	index = connman_inet_ifindex("lo");
 	if (ifdata->index == index && !ifdata->lo_exclude) {
+#ifdef SYSTEMD_RESOLVED_DNS_BACKEND
+		if (((err & IPv6_FAILED) != IPv6_FAILED) ||
+					((err & IPv4_FAILED) != IPv4_FAILED))
+			__connman_resolvfile_append(index, NULL,
+								DNS_BACKEND_V4);
+#else
 		if ((err & IPv6_FAILED) != IPv6_FAILED)
-			__connman_resolvfile_append(index, NULL, "::1");
+			__connman_resolvfile_append(index, NULL,
+								DNS_BACKEND_V6);
 
 		if ((err & IPv4_FAILED) != IPv4_FAILED)
-			__connman_resolvfile_append(index, NULL, "127.0.0.1");
+			__connman_resolvfile_append(index, NULL,
+								DNS_BACKEND_V4);
+#endif
 	}
 
 	return 0;
@@ -2466,8 +2475,13 @@ static void destroy_listener(struct dns_listener_data *ifdata)
 	int index = connman_inet_ifindex("lo");
 
 	if (ifdata->index == index && !ifdata->lo_exclude) {
-		__connman_resolvfile_remove(index, NULL, "127.0.0.1");
-		__connman_resolvfile_remove(index, NULL, "::1");
+
+		__connman_resolvfile_remove(index, NULL, DNS_BACKEND_V4);
+
+// With internal DNS this is defined, with systemd-resolved it is not.
+#ifndef SYSTEMD_RESOLVED_DNS_BACKEND
+		__connman_resolvfile_remove(index, NULL, DNS_BACKEND_V6);
+#endif
 	}
 
 	for (GSList *list = request_list; list; list = list->next) {

@@ -1539,7 +1539,10 @@ static int nameserver_add(struct connman_service *service,
 static int nameserver_add_all(struct connman_service *service,
 			enum connman_ipconfig_type type)
 {
+	char **fallback_dns;
 	int i = 0;
+
+	fallback_dns = connman_setting_get_string_list("FallbackNameservers");
 
 	if (service->nameservers_config) {
 		while (service->nameservers_config[i]) {
@@ -1553,7 +1556,24 @@ static int nameserver_add_all(struct connman_service *service,
 				service->nameservers[i]);
 			i++;
 		}
+	/*
+	 * If there are no nameservers and there are no fallback nameservers
+	 * defined add the gateway as the DNS server, which in some tethering
+	 * configurations or because of an error might not be sent to clients.
+	 */
+	} else if (!fallback_dns) {
+		int index = __connman_service_get_index(service);
+		const char *dns = __connman_ipconfig_get_gateway_from_index(
+								index, type);
+
+		DBG("No DNS servers or fallback DNS servers set."
+						"Use gw %s as DNS", dns);
+		__connman_service_nameserver_append(service, dns, false);
+
+		i++;
 	}
+
+	g_strfreev(fallback_dns);
 
 	if (!i)
 		__connman_resolver_append_fallback_nameservers();
