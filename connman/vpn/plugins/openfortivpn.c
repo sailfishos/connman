@@ -40,8 +40,6 @@
 #include <connman/ipaddress.h>
 #include <connman/setting.h>
 
-#include <pppd/pathnames.h> // _PATH_PEERFILES
-
 #include "../vpn-provider.h"
 #include "../vpn-agent.h"
 
@@ -49,6 +47,12 @@
 #include "../vpn.h"
 
 #define PLUGIN_NAME "openfortivpn"
+/*
+ * TODO: use buildtime definitions for this as PPPD pathnames.h is not a
+ * public header as of PPPD version 2.5.0. Hardcode the path for now.
+ */
+#define PPPD_PEERFILES "/etc/ppp/peers/"
+
 static DBusConnection *connection;
 
 /* From openconnect.c */
@@ -376,7 +380,7 @@ static int run_connect(struct ofv_private_data *data, const char *username,
 
 	DBG("username %s password %p", username, password);
 
-	peer_file = g_strconcat(_PATH_PEERFILES, PLUGIN_NAME, NULL);
+	peer_file = g_strconcat(PPPD_PEERFILES, PLUGIN_NAME, NULL);
 	if (g_file_test(peer_file, G_FILE_TEST_EXISTS) &&
 			g_file_test(peer_file, G_FILE_TEST_IS_REGULAR)) {
 		initial_args = g_strdup_printf("--pppd-call=%s", PLUGIN_NAME);
