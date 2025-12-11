@@ -1501,7 +1501,7 @@ int connman_iptables_commit(const char *table_name)
 	if (!table_name || !(*table_name))
 		return -EINVAL;
 
-		DBG("%s", table_name);
+	DBG("%s", table_name);
 
 	return __connman_iptables_commit(AF_INET, table_name);
 }
