@@ -55,7 +55,8 @@
 enum {
 	OPT_STRING = 1,
 	OPT_BOOL = 2,
-	OPT_PPTP_ONLY = 3,
+	OPT_PPTP_ONLY_STRING = 3,
+	OPT_PPTP_ONLY_BOOL = 4,
 };
 
 struct {
@@ -65,8 +66,10 @@ struct {
 	int type;
 } pptp_options[] = {
 	{ "PPTP.User", "user", NULL, OPT_STRING },
-	{ "PPTP.IdleWait", "--idle-wait", NULL, OPT_PPTP_ONLY},
-	{ "PPTP.MaxEchoWait", "--max-echo-wait", NULL, OPT_PPTP_ONLY},
+	{ "PPTP.IdleWait", "--idle-wait", NULL, OPT_PPTP_ONLY_STRING},
+	{ "PPTP.MaxEchoWait", "--max-echo-wait", NULL, OPT_PPTP_ONLY_STRING},
+	{ "PPTP.Sync", "--sync", NULL, OPT_PPTP_ONLY_BOOL},
+	{ "PPTP.Nobuffer", "--nobuffer", NULL, OPT_PPTP_ONLY_BOOL},
 	{ "PPPD.EchoFailure", "lcp-echo-failure", "0", OPT_STRING },
 	{ "PPPD.EchoInterval", "lcp-echo-interval", "0", OPT_STRING },
 	{ "PPPD.Debug", "debug", NULL, OPT_STRING },
@@ -314,15 +317,24 @@ static int pptp_save(struct vpn_provider *provider, GKeyFile *keyfile)
 	return 0;
 }
 
+static bool get_value_boolean(const char *value)
+{
+	if (!value || !*value)
+		return false;
+
+	if (strcasecmp(value, "yes") == 0 ||
+			strcasecmp(value, "true") == 0 ||
+			strcmp(value, "1") == 0)
+		return true;
+
+	return false;
+}
+
 static void pptp_write_bool_option(struct connman_task *task,
 				const char *key, const char *value)
 {
-	if (key && value) {
-		if (strcasecmp(value, "yes") == 0 ||
-				strcasecmp(value, "true") == 0 ||
-				strcmp(value, "1") == 0)
-			connman_task_add_argument(task, key, NULL);
-	}
+	if (key && value && get_value_boolean(value))
+		connman_task_add_argument(task, key, NULL);
 }
 
 static void pptp_died(struct connman_task *task, int exit_code,
@@ -544,9 +556,18 @@ static int run_connect(struct pptp_private_data *data, const char *username,
 		else if (pptp_options[i].type == OPT_BOOL)
 			pptp_write_bool_option(task,
 					pptp_options[i].pptp_opt, opt_s);
-		else if (pptp_options[i].type == OPT_PPTP_ONLY)
+		else if (pptp_options[i].type == OPT_PPTP_ONLY_STRING)
 			g_string_append_printf(pptp_opt_s, " %s %s",
 					pptp_options[i].pptp_opt, opt_s);
+		else if (pptp_options[i].type == OPT_PPTP_ONLY_BOOL &&
+						get_value_boolean(opt_s)) {
+			/* --sync needs sync in pppd */
+			if (!g_strcmp0(pptp_options[i].cm_opt, "PPTP.Sync"))
+				connman_task_add_argument(task, "sync", NULL);
+
+			g_string_append_printf(pptp_opt_s, " %s",
+					pptp_options[i].pptp_opt);
+		}
 	}
 
 	str = g_string_free(pptp_opt_s, FALSE);
