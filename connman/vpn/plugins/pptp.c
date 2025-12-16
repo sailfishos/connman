@@ -530,7 +530,7 @@ static int run_connect(struct pptp_private_data *data, const char *username,
 
 	/* Create PPTP options for pppd "pty" */
 	pptp_opt_s = g_string_new(NULL);
-	g_string_append_printf(pptp_opt_s, "%s %s --nolaunchpppd --loglevel 2",
+	g_string_append_printf(pptp_opt_s, "%s %s --nolaunchpppd --loglevel 0",
 				PPTP, host);
 
 	connman_task_add_argument(task, "nodetach", NULL);
