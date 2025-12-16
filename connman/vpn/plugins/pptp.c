@@ -113,6 +113,9 @@ static void pptp_connect_done(struct pptp_private_data *data, int err)
 	user_data = data->user_data;
 	data->cb = NULL;
 	data->user_data = NULL;
+
+	DBG("error %d", err);
+
 	cb(data->provider, user_data, err);
 }
 
@@ -186,7 +189,9 @@ static int pptp_notify(DBusMessage *msg, struct vpn_provider *provider)
 	}
 
 	if (strcmp(reason, "connect")) {
-		pptp_connect_done(data, EIO);
+		DBG("failed to connect");
+
+		pptp_connect_done(data, ECONNREFUSED);
 
 		/*
 		 * Stop the task to avoid potential looping of this state when
@@ -195,7 +200,7 @@ static int pptp_notify(DBusMessage *msg, struct vpn_provider *provider)
 		if (data && data->task)
 			connman_task_stop(data->task);
 
-		return VPN_STATE_DISCONNECT;
+		return VPN_STATE_FAILURE;
 	}
 
 	dbus_message_iter_recurse(&iter, &dict);
@@ -357,7 +362,6 @@ static void request_input_reply(DBusMessage *reply, void *user_data)
 {
 	struct request_input_reply *pptp_reply = user_data;
 	struct pptp_private_data *data;
-	const char *error = NULL;
 	char *username = NULL, *password = NULL;
 	char *key;
 	DBusMessageIter iter, dict;
@@ -365,8 +369,10 @@ static void request_input_reply(DBusMessage *reply, void *user_data)
 
 	DBG("provider %p", pptp_reply->provider);
 
-	if (!reply)
+	if (!reply) {
+		err = ENOMSG;
 		goto done;
+	}
 
 	data = pptp_reply->user_data;
 
@@ -377,7 +383,6 @@ static void request_input_reply(DBusMessage *reply, void *user_data)
 		/* Ensure cb is called only once */
 		data->cb = NULL;
 		data->user_data = NULL;
-		error = dbus_message_get_error_name(reply);
 		goto done;
 	}
 
@@ -426,7 +431,7 @@ static void request_input_reply(DBusMessage *reply, void *user_data)
 	}
 
 done:
-	pptp_reply->callback(pptp_reply->provider, username, password, error,
+	pptp_reply->callback(pptp_reply->provider, username, password, err,
 				pptp_reply->user_data);
 
 	g_free(username);
@@ -435,13 +440,9 @@ done:
 	g_free(pptp_reply);
 }
 
-typedef void (* request_cb_t)(struct vpn_provider *provider,
-				const char *username, const char *password,
-				const char *error, void *user_data);
-
 static int request_input(struct vpn_provider *provider,
-			request_cb_t callback, const char *dbus_sender,
-			void *user_data)
+			vpn_provider_password_cb_t callback,
+			const char *dbus_sender, void *user_data)
 {
 	DBusMessage *message;
 	const char *path, *agent_sender, *agent_path;
@@ -596,15 +597,15 @@ done:
 static void request_input_cb(struct vpn_provider *provider,
 			const char *username,
 			const char *password,
-			const char *error, void *user_data)
+			int error, void *user_data)
 {
 	struct pptp_private_data *data = user_data;
 
-	if (!username || !*username || !password || !*password)
-		DBG("Requesting username %s or password failed, error %s",
-			username, error);
-	else if (error)
-		DBG("error %s", error);
+	if (error || (!username || !*username || !password || !*password)) {
+		DBG("Requesting credentials failed: %s", strerror(error));
+		pptp_connect_done(data, error);
+		return;
+	}
 
 	vpn_provider_set_string(provider, "PPTP.User", username);
 	vpn_provider_set_string_hide_value(provider, "PPTP.Password",
@@ -666,6 +667,7 @@ error:
 
 static int pptp_error_code(struct vpn_provider *provider, int exit_code)
 {
+	DBG("exit code %d", exit_code);
 
 	switch (exit_code) {
 	case 1:
