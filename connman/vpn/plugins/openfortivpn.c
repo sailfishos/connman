@@ -164,7 +164,6 @@ static void request_input_reply(DBusMessage *reply, void *user_data)
 {
 	struct request_input_reply *ofv_reply = user_data;
 	struct ofv_private_data *data = NULL;
-	const char *error = NULL;
 	char *username = NULL;
 	char *password = NULL;
 	char *key;
@@ -174,8 +173,10 @@ static void request_input_reply(DBusMessage *reply, void *user_data)
 
 	DBG("provider %p", ofv_reply->provider);
 
-	if (!reply)
+	if (!reply) {
+		err = ENOMSG;
 		goto done;
+	}
 
 	data = ofv_reply->user_data;
 
@@ -186,7 +187,6 @@ static void request_input_reply(DBusMessage *reply, void *user_data)
 		/* Ensure cb is called only once */
 		data->cb = NULL;
 		data->user_data = NULL;
-		error = dbus_message_get_error_name(reply);
 		goto done;
 	}
 
@@ -239,7 +239,7 @@ static void request_input_reply(DBusMessage *reply, void *user_data)
 	}
 
 done:
-	ofv_reply->callback(ofv_reply->provider, username, password, error,
+	ofv_reply->callback(ofv_reply->provider, username, password, err,
 				ofv_reply->user_data);
 
 	g_free(username);
@@ -248,12 +248,9 @@ done:
 	g_free(ofv_reply);
 }
 
-typedef void (*request_cb_t)(struct vpn_provider *provider,
-			const char *username, const char *password,
-			const char *error, void *user_data);
-
-static int request_input(struct vpn_provider *provider, request_cb_t callback,
-			 const char *dbus_sender, void *user_data)
+static int request_input(struct vpn_provider *provider,
+			vpn_provider_password_cb_t callback,
+			const char *dbus_sender, void *user_data)
 {
 	DBusMessage *message;
 	const char *path;
@@ -438,15 +435,15 @@ done:
 
 static void request_input_cb(struct vpn_provider *provider,
 			const char *username, const char *password,
-			const char *error, void *user_data)
+			int error, void *user_data)
 {
 	struct ofv_private_data *data = user_data;
 
-	if (!username || !*username || !password || !*password)
-		DBG("Requesting username %s or password failed, error %s",
-					username, error);
-	else if (error)
-		DBG("error %s", error);
+	if (error || (!username || !*username || !password || !*password)) {
+		DBG("Requesting credentials failed: %s", strerror(error));
+		ofv_connect_done(data, error);
+		return;
+	}
 
 	vpn_provider_set_string(provider, "openfortivpn.User", username);
 	vpn_provider_set_string_hide_value(provider, "openfortivpn.Password",
@@ -498,7 +495,7 @@ static int ofv_notify(DBusMessage *msg, struct vpn_provider *provider)
 	}
 
 	if (strcmp(reason, "connect")) {
-		ofv_connect_done(data, EIO);
+		ofv_connect_done(data, ECONNREFUSED);
 
 		/*
 		 * Stop the task to avoid potential looping of this state when
@@ -507,7 +504,7 @@ static int ofv_notify(DBusMessage *msg, struct vpn_provider *provider)
 		if (data && data->task)
 			connman_task_stop(data->task);
 
-		return VPN_STATE_DISCONNECT;
+		return VPN_STATE_FAILURE;
 	}
 
 	dbus_message_iter_recurse(&iter, &dict);
