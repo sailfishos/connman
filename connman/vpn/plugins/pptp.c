@@ -55,7 +55,8 @@
 enum {
 	OPT_STRING = 1,
 	OPT_BOOL = 2,
-	OPT_PPTP_ONLY = 3,
+	OPT_PPTP_ONLY_STRING = 3,
+	OPT_PPTP_ONLY_BOOL = 4,
 };
 
 struct {
@@ -65,8 +66,10 @@ struct {
 	int type;
 } pptp_options[] = {
 	{ "PPTP.User", "user", NULL, OPT_STRING },
-	{ "PPTP.IdleWait", "--idle-wait", NULL, OPT_PPTP_ONLY},
-	{ "PPTP.MaxEchoWait", "--max-echo-wait", NULL, OPT_PPTP_ONLY},
+	{ "PPTP.IdleWait", "--idle-wait", NULL, OPT_PPTP_ONLY_STRING},
+	{ "PPTP.MaxEchoWait", "--max-echo-wait", NULL, OPT_PPTP_ONLY_STRING},
+	{ "PPTP.Sync", "--sync", NULL, OPT_PPTP_ONLY_BOOL},
+	{ "PPTP.Nobuffer", "--nobuffer", NULL, OPT_PPTP_ONLY_BOOL},
 	{ "PPPD.EchoFailure", "lcp-echo-failure", "0", OPT_STRING },
 	{ "PPPD.EchoInterval", "lcp-echo-interval", "0", OPT_STRING },
 	{ "PPPD.Debug", "debug", NULL, OPT_STRING },
@@ -110,6 +113,9 @@ static void pptp_connect_done(struct pptp_private_data *data, int err)
 	user_data = data->user_data;
 	data->cb = NULL;
 	data->user_data = NULL;
+
+	DBG("error %d", err);
+
 	cb(data->provider, user_data, err);
 }
 
@@ -183,7 +189,9 @@ static int pptp_notify(DBusMessage *msg, struct vpn_provider *provider)
 	}
 
 	if (strcmp(reason, "connect")) {
-		pptp_connect_done(data, EIO);
+		DBG("failed to connect");
+
+		pptp_connect_done(data, ECONNREFUSED);
 
 		/*
 		 * Stop the task to avoid potential looping of this state when
@@ -192,7 +200,7 @@ static int pptp_notify(DBusMessage *msg, struct vpn_provider *provider)
 		if (data && data->task)
 			connman_task_stop(data->task);
 
-		return VPN_STATE_DISCONNECT;
+		return VPN_STATE_FAILURE;
 	}
 
 	dbus_message_iter_recurse(&iter, &dict);
@@ -314,15 +322,24 @@ static int pptp_save(struct vpn_provider *provider, GKeyFile *keyfile)
 	return 0;
 }
 
+static bool get_value_boolean(const char *value)
+{
+	if (!value || !*value)
+		return false;
+
+	if (strcasecmp(value, "yes") == 0 ||
+			strcasecmp(value, "true") == 0 ||
+			strcmp(value, "1") == 0)
+		return true;
+
+	return false;
+}
+
 static void pptp_write_bool_option(struct connman_task *task,
 				const char *key, const char *value)
 {
-	if (key && value) {
-		if (strcasecmp(value, "yes") == 0 ||
-				strcasecmp(value, "true") == 0 ||
-				strcmp(value, "1") == 0)
-			connman_task_add_argument(task, key, NULL);
-	}
+	if (key && value && get_value_boolean(value))
+		connman_task_add_argument(task, key, NULL);
 }
 
 static void pptp_died(struct connman_task *task, int exit_code,
@@ -345,7 +362,6 @@ static void request_input_reply(DBusMessage *reply, void *user_data)
 {
 	struct request_input_reply *pptp_reply = user_data;
 	struct pptp_private_data *data;
-	const char *error = NULL;
 	char *username = NULL, *password = NULL;
 	char *key;
 	DBusMessageIter iter, dict;
@@ -353,8 +369,10 @@ static void request_input_reply(DBusMessage *reply, void *user_data)
 
 	DBG("provider %p", pptp_reply->provider);
 
-	if (!reply)
+	if (!reply) {
+		err = ENOMSG;
 		goto done;
+	}
 
 	data = pptp_reply->user_data;
 
@@ -365,7 +383,6 @@ static void request_input_reply(DBusMessage *reply, void *user_data)
 		/* Ensure cb is called only once */
 		data->cb = NULL;
 		data->user_data = NULL;
-		error = dbus_message_get_error_name(reply);
 		goto done;
 	}
 
@@ -414,7 +431,7 @@ static void request_input_reply(DBusMessage *reply, void *user_data)
 	}
 
 done:
-	pptp_reply->callback(pptp_reply->provider, username, password, error,
+	pptp_reply->callback(pptp_reply->provider, username, password, err,
 				pptp_reply->user_data);
 
 	g_free(username);
@@ -423,13 +440,9 @@ done:
 	g_free(pptp_reply);
 }
 
-typedef void (* request_cb_t)(struct vpn_provider *provider,
-				const char *username, const char *password,
-				const char *error, void *user_data);
-
 static int request_input(struct vpn_provider *provider,
-			request_cb_t callback, const char *dbus_sender,
-			void *user_data)
+			vpn_provider_password_cb_t callback,
+			const char *dbus_sender, void *user_data)
 {
 	DBusMessage *message;
 	const char *path, *agent_sender, *agent_path;
@@ -517,7 +530,7 @@ static int run_connect(struct pptp_private_data *data, const char *username,
 
 	/* Create PPTP options for pppd "pty" */
 	pptp_opt_s = g_string_new(NULL);
-	g_string_append_printf(pptp_opt_s, "%s %s --nolaunchpppd --loglevel 2",
+	g_string_append_printf(pptp_opt_s, "%s %s --nolaunchpppd --loglevel 0",
 				PPTP, host);
 
 	connman_task_add_argument(task, "nodetach", NULL);
@@ -544,9 +557,18 @@ static int run_connect(struct pptp_private_data *data, const char *username,
 		else if (pptp_options[i].type == OPT_BOOL)
 			pptp_write_bool_option(task,
 					pptp_options[i].pptp_opt, opt_s);
-		else if (pptp_options[i].type == OPT_PPTP_ONLY)
+		else if (pptp_options[i].type == OPT_PPTP_ONLY_STRING)
 			g_string_append_printf(pptp_opt_s, " %s %s",
 					pptp_options[i].pptp_opt, opt_s);
+		else if (pptp_options[i].type == OPT_PPTP_ONLY_BOOL &&
+						get_value_boolean(opt_s)) {
+			/* --sync needs sync in pppd */
+			if (!g_strcmp0(pptp_options[i].cm_opt, "PPTP.Sync"))
+				connman_task_add_argument(task, "sync", NULL);
+
+			g_string_append_printf(pptp_opt_s, " %s",
+					pptp_options[i].pptp_opt);
+		}
 	}
 
 	str = g_string_free(pptp_opt_s, FALSE);
@@ -575,15 +597,15 @@ done:
 static void request_input_cb(struct vpn_provider *provider,
 			const char *username,
 			const char *password,
-			const char *error, void *user_data)
+			int error, void *user_data)
 {
 	struct pptp_private_data *data = user_data;
 
-	if (!username || !*username || !password || !*password)
-		DBG("Requesting username %s or password failed, error %s",
-			username, error);
-	else if (error)
-		DBG("error %s", error);
+	if (error || (!username || !*username || !password || !*password)) {
+		DBG("Requesting credentials failed: %s", strerror(error));
+		pptp_connect_done(data, error);
+		return;
+	}
 
 	vpn_provider_set_string(provider, "PPTP.User", username);
 	vpn_provider_set_string_hide_value(provider, "PPTP.Password",
@@ -645,13 +667,29 @@ error:
 
 static int pptp_error_code(struct vpn_provider *provider, int exit_code)
 {
+	unsigned int conn_errors = vpn_provider_get_connection_errors(
+								provider);
+	unsigned int auth_errors = vpn_provider_get_authentication_errors(
+								provider);
+	
+	DBG("exit code %d connection errors %d auth errors %d", exit_code,
+						conn_errors, auth_errors);
 
+	/* With PPTP the exit code comes from pppd */
 	switch (exit_code) {
 	case 1:
 		return CONNMAN_PROVIDER_ERROR_CONNECT_FAILED;
 	case 2:
 		return CONNMAN_PROVIDER_ERROR_LOGIN_FAILED;
-	case 16:
+	case 16: // The link was terminated by the modem hanging up.
+		/*
+		 * These values are reset when connection is success or the
+		 * provider is saved. If there are connection errors do not
+		 * reset the credentials.
+		 */
+		if (conn_errors && !auth_errors)
+			return CONNMAN_PROVIDER_ERROR_CONNECT_FAILED;
+
 		return CONNMAN_PROVIDER_ERROR_AUTH_FAILED;
 	default:
 		return CONNMAN_PROVIDER_ERROR_UNKNOWN;
