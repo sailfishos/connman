@@ -667,14 +667,29 @@ error:
 
 static int pptp_error_code(struct vpn_provider *provider, int exit_code)
 {
-	DBG("exit code %d", exit_code);
+	unsigned int conn_errors = vpn_provider_get_connection_errors(
+								provider);
+	unsigned int auth_errors = vpn_provider_get_authentication_errors(
+								provider);
+	
+	DBG("exit code %d connection errors %d auth errors %d", exit_code,
+						conn_errors, auth_errors);
 
+	/* With PPTP the exit code comes from pppd */
 	switch (exit_code) {
 	case 1:
 		return CONNMAN_PROVIDER_ERROR_CONNECT_FAILED;
 	case 2:
 		return CONNMAN_PROVIDER_ERROR_LOGIN_FAILED;
-	case 16:
+	case 16: // The link was terminated by the modem hanging up.
+		/*
+		 * These values are reset when connection is success or the
+		 * provider is saved. If there are connection errors do not
+		 * reset the credentials.
+		 */
+		if (conn_errors && !auth_errors)
+			return CONNMAN_PROVIDER_ERROR_CONNECT_FAILED;
+
 		return CONNMAN_PROVIDER_ERROR_AUTH_FAILED;
 	default:
 		return CONNMAN_PROVIDER_ERROR_UNKNOWN;
