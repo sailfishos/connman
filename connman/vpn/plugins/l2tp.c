@@ -69,6 +69,7 @@ enum {
 	OPT_L2	= 3,
 	OPT_PPPD = 4,
 	OPT_L2LNS = 5,
+	OPT_L2SEC = 6,
 };
 
 struct {
@@ -102,6 +103,8 @@ struct {
 	{ "L2TP.Rand Source", "rand source", OPT_L2G, NULL, OPT_STRING },
 	{ "L2TP.IPsecSaref", "ipsec saref", OPT_L2G, "no", OPT_STRING },
 	{ "L2TP.Port", "port", OPT_L2G, NULL, OPT_STRING },
+	{ "L2TP.LocalHostname", "", OPT_L2SEC, NULL, OPT_STRING},
+	{ "L2TP.RemoteHostname", "", OPT_L2SEC, NULL, OPT_STRING},
 	{ "PPPD.EchoFailure", "lcp-echo-failure", OPT_PPPD, "0", OPT_STRING },
 	{ "PPPD.EchoInterval", "lcp-echo-interval", OPT_PPPD, "0", OPT_STRING },
 	{ "PPPD.Debug", "debug", OPT_PPPD, NULL, OPT_STRING },
@@ -130,6 +133,7 @@ struct l2tp_private_data {
 	char *if_name;
 	vpn_provider_connect_cb_t cb;
 	void *user_data;
+	bool remove_secrets_file;
 };
 
 static void l2tp_connect_done(struct l2tp_private_data *data, int err)
@@ -222,6 +226,7 @@ static int l2tp_notify(DBusMessage *msg, struct vpn_provider *provider)
 	}
 
 	if (strcmp(reason, "connect")) {
+		DBG("failure, reason: %s", reason);
 		l2tp_connect_done(data, ECONNREFUSED);
 
 		/*
@@ -494,6 +499,11 @@ static int l2tp_write_fields(struct vpn_provider *provider,
 		if (!opt_s)
 			continue;
 
+		/* When auth file is  set to "-" use system l2tp-secrets file */
+		if (!g_strcmp0(pppd_options[i].cm_opt, "L2TP.AuthFile") &&
+							!g_strcmp0(opt_s, "-"))
+			continue;
+
 		if (pppd_options[i].type == OPT_STRING)
 			l2tp_write_section(fd,
 				pppd_options[i].pppd_opt, opt_s);
@@ -529,10 +539,41 @@ static int l2tp_write_config(struct vpn_provider *provider,
 	return 0;
 }
 
+static int l2tp_write_secret(struct vpn_provider *provider, int fd)
+{
+	const char *local;
+	const char *remote;
+	const char *shared;
+	char *buf;
+	int err;
+
+	local = vpn_provider_get_string(provider, "L2TP.LocalHostname");
+	remote = vpn_provider_get_string(provider, "L2TP.RemoteHostname");
+	shared = vpn_provider_get_string(provider, "L2TP.SharedSecret");
+
+	if (!shared || !*shared) {
+		connman_error("L2TP shared secret required but not set");
+		return -ENOENT;
+	}
+
+	buf = g_strdup_printf("%s\t%s\t%s\n", (local && *local) ? local : "*",
+					(remote && *remote) ? remote : "*",
+					shared);
+	if (!buf)
+		return -ENOMEM;
+
+	err = full_write(fd, buf, strlen(buf));
+	g_free(buf);
+
+	return err;
+}
+
 static void l2tp_died(struct connman_task *task, int exit_code, void *user_data)
 {
 	struct l2tp_private_data *data = user_data;
 	char *conf_file;
+
+	DBG("died of %d", exit_code);
 
 	vpn_died(task, exit_code, data->provider);
 
@@ -544,12 +585,27 @@ static void l2tp_died(struct connman_task *task, int exit_code, void *user_data)
 	unlink(conf_file);
 	g_free(conf_file);
 
+	if (data->remove_secrets_file) {
+		conf_file = g_strconcat(VPN_STATEDIR,
+						"/connman-xl2tpd-secrets.conf",
+						NULL);
+		unlink(conf_file);
+		g_free(conf_file);
+	}
+
 	free_private_data(data);
 }
+
+typedef void (* l2tp_shared_secret_cb_t) (struct vpn_provider *provider,
+					const char *local_host,
+					const char *remote_host,
+					const char *shared_secret,
+					int error, void *user_data);
 
 struct request_input_reply {
 	struct vpn_provider *provider;
 	vpn_provider_password_cb_t callback;
+	l2tp_shared_secret_cb_t secret_callback;
 	void *user_data;
 };
 
@@ -557,7 +613,11 @@ static void request_input_reply(DBusMessage *reply, void *user_data)
 {
 	struct request_input_reply *l2tp_reply = user_data;
 	struct l2tp_private_data *data;
-	char *username = NULL, *password = NULL;
+	char *username = NULL;
+	char *password = NULL;
+	char *secret = NULL;
+	char *local = NULL;
+	char *remote = NULL;
 	char *key;
 	DBusMessageIter iter, dict;
 	int err;
@@ -622,21 +682,140 @@ static void request_input_reply(DBusMessage *reply, void *user_data)
 			password = g_strdup(str);
 		}
 
+		if (g_str_equal(key, "L2TP.LocalHostname")) {
+			dbus_message_iter_next(&entry);
+			if (dbus_message_iter_get_arg_type(&entry)
+							!= DBUS_TYPE_VARIANT)
+				break;
+			dbus_message_iter_recurse(&entry, &value);
+			if (dbus_message_iter_get_arg_type(&value)
+							!= DBUS_TYPE_STRING)
+				break;
+			dbus_message_iter_get_basic(&value, &str);
+			local = g_strdup(str);
+		}
+
+		if (g_str_equal(key, "L2TP.RemoteHostname")) {
+			dbus_message_iter_next(&entry);
+			if (dbus_message_iter_get_arg_type(&entry)
+							!= DBUS_TYPE_VARIANT)
+				break;
+			dbus_message_iter_recurse(&entry, &value);
+			if (dbus_message_iter_get_arg_type(&value)
+							!= DBUS_TYPE_STRING)
+				break;
+			dbus_message_iter_get_basic(&value, &str);
+			remote = g_strdup(str);
+		}
+
+		if (g_str_equal(key, "L2TP.SharedSecret")) {
+			dbus_message_iter_next(&entry);
+			if (dbus_message_iter_get_arg_type(&entry)
+							!= DBUS_TYPE_VARIANT)
+				break;
+			dbus_message_iter_recurse(&entry, &value);
+			if (dbus_message_iter_get_arg_type(&value)
+							!= DBUS_TYPE_STRING)
+				break;
+			dbus_message_iter_get_basic(&value, &str);
+			secret = g_strdup(str);
+		}
+
 		dbus_message_iter_next(&dict);
 	}
 
 done:
-	l2tp_reply->callback(l2tp_reply->provider, username, password, err,
-				l2tp_reply->user_data);
+	if (l2tp_reply->secret_callback)
+		l2tp_reply->secret_callback(l2tp_reply->provider, local, remote,
+					secret, err, l2tp_reply->user_data);
+
+	if (l2tp_reply->callback)
+		l2tp_reply->callback(l2tp_reply->provider, username, password,
+					err, l2tp_reply->user_data);
 
 	g_free(username);
 	g_free(password);
+	g_free(local);
+	g_free(remote);
+	g_free(secret);
 
 	g_free(l2tp_reply);
 }
 
+static void request_input_append(DBusMessageIter *iter,
+		const char *str_type, const char *str, void *user_data)
+{
+	const char *string;
+
+	connman_dbus_dict_append_basic(iter, "Type",
+				DBUS_TYPE_STRING, &str_type);
+	connman_dbus_dict_append_basic(iter, "Requirement",
+				DBUS_TYPE_STRING, &str);
+
+	if (!user_data)
+		return;
+
+	string = user_data;
+	connman_dbus_dict_append_basic(iter, "Value", DBUS_TYPE_STRING,
+				&string);
+}
+
+static void request_input_append_informational(DBusMessageIter *iter,
+		void *user_data)
+{
+	request_input_append(iter, "string", "informational", user_data);
+}
+
+static void request_input_append_optional(DBusMessageIter *iter,
+		void *user_data)
+{
+	request_input_append(iter, "string", "optional", user_data);
+}
+
+static void request_input_append_password(DBusMessageIter *iter,
+		void *user_data)
+{
+	request_input_append(iter, "password", "mandatory", user_data);
+}
+
+static void request_input_append_to_dict(struct vpn_provider *provider,
+			DBusMessageIter *dict,
+			connman_dbus_append_cb_t function_cb, const char *key)
+{
+	const char *str;
+	bool immutable = false;
+
+	if (!provider || !dict || !function_cb || !key)
+		return;
+
+	str = vpn_provider_get_string(provider, key);
+	/* Ignore empty informational content */
+	if (!str && function_cb == request_input_append_informational)
+		return;
+
+	/* If value is "-", it is cleared by VPN agent */
+	if (!g_strcmp0(str, "-"))
+		str = NULL;
+
+	if (str)
+		immutable = vpn_provider_get_string_immutable(provider, key);
+
+	if (immutable) {
+		/* Hide immutable password types */
+		if (function_cb == request_input_append_password)
+			str = "********";
+
+		/* Send immutable as informational */
+		function_cb = request_input_append_informational;
+	}
+
+	connman_dbus_dict_append_dict(dict, key, function_cb,
+				str ? (void *)str : NULL);
+}
+
 static int request_input(struct vpn_provider *provider,
 			vpn_provider_password_cb_t callback,
+			l2tp_shared_secret_cb_t secret_callback,
 			const char *dbus_sender, void *user_data)
 {
 	DBusMessage *message;
@@ -669,7 +848,22 @@ static int request_input(struct vpn_provider *provider,
 	if (vpn_provider_get_authentication_errors(provider))
 		vpn_agent_append_auth_failure(&dict, provider, NULL);
 
-	vpn_agent_append_user_info(&dict, provider, "L2TP.User");
+	if (callback)
+		vpn_agent_append_user_info(&dict, provider, "L2TP.User");
+
+	if (secret_callback) {
+		request_input_append_to_dict(provider, &dict,
+					request_input_append_optional,
+					"L2TP.LocalHostname");
+
+		request_input_append_to_dict(provider, &dict,
+					request_input_append_optional,
+					"L2TP.RemoteHostname");
+
+		request_input_append_to_dict(provider, &dict,
+					request_input_append_password,
+					"L2TP.SharedSecret");
+	}
 
 	vpn_agent_append_host_and_name(&dict, provider);
 
@@ -683,6 +877,7 @@ static int request_input(struct vpn_provider *provider,
 
 	l2tp_reply->provider = provider;
 	l2tp_reply->callback = callback;
+	l2tp_reply->secret_callback = secret_callback;
 	l2tp_reply->user_data = user_data;
 
 	err = connman_agent_queue_message(provider, message,
@@ -701,12 +896,18 @@ static int request_input(struct vpn_provider *provider,
 }
 
 static int run_connect(struct l2tp_private_data *data,
-			const char *username, const char *password)
+			const char *username, const char *password,
+			bool use_challenge, const char *auth_file)
 {
 	struct vpn_provider *provider = data->provider;
 	struct connman_task *task = data->task;
-	char *l2tp_name, *ctrl_name, *pppd_name;
-	int l2tp_fd, pppd_fd;
+	char *l2tp_name = NULL;
+	char *ctrl_name = NULL;
+	char *pppd_name = NULL;
+	char *secrets_name = NULL;
+	int l2tp_fd = -1;
+	int pppd_fd = -1;
+	int secrets_fd = -1;
 	int err;
 
 	if (!username || !*username || !password || !*password) {
@@ -722,7 +923,6 @@ static int run_connect(struct l2tp_private_data *data,
 
 	l2tp_fd = open(l2tp_name, O_RDWR|O_CREAT|O_TRUNC, S_IRUSR|S_IWUSR);
 	if (l2tp_fd < 0) {
-		g_free(l2tp_name);
 		connman_error("Error writing l2tp config");
 		err = -EIO;
 		goto done;
@@ -732,9 +932,6 @@ static int run_connect(struct l2tp_private_data *data,
 
 	if (mkfifo(ctrl_name, S_IRUSR|S_IWUSR) != 0 && errno != EEXIST) {
 		connman_error("Error creating xl2tp control pipe");
-		g_free(l2tp_name);
-		g_free(ctrl_name);
-		close(l2tp_fd);
 		err = -EIO;
 		goto done;
 	}
@@ -744,12 +941,27 @@ static int run_connect(struct l2tp_private_data *data,
 	pppd_fd = open(pppd_name, O_RDWR|O_CREAT|O_TRUNC, S_IRUSR|S_IWUSR);
 	if (pppd_fd < 0) {
 		connman_error("Error writing pppd config");
-		g_free(l2tp_name);
-		g_free(ctrl_name);
-		g_free(pppd_name);
-		close(l2tp_fd);
 		err = -EIO;
 		goto done;
+	}
+
+	secrets_name = g_strdup(auth_file);
+	if (use_challenge && (!secrets_name)) {
+		secrets_name = g_strconcat(VPN_STATEDIR,
+						"/connman-xl2tpd-secrets.conf",
+						NULL);
+
+		secrets_fd = open(secrets_name, O_RDWR|O_CREAT|O_TRUNC,
+						S_IRUSR|S_IWUSR);
+		if (secrets_fd < 0) {
+			connman_error("Error writing l2tp secrets");
+			err = -EIO;
+			goto done;
+		}
+
+		/* Toggle the created file to be removed at shutdown */
+		data->remove_secrets_file = true;
+		l2tp_write_secret(provider, secrets_fd);
 	}
 
 	l2tp_write_config(provider, pppd_name, l2tp_fd);
@@ -760,11 +972,8 @@ static int run_connect(struct l2tp_private_data *data,
 	connman_task_add_argument(task, "-C", ctrl_name);
 	connman_task_add_argument(task, "-c", l2tp_name);
 
-	g_free(l2tp_name);
-	g_free(ctrl_name);
-	g_free(pppd_name);
-	close(l2tp_fd);
-	close(pppd_fd);
+	if (use_challenge && g_strcmp0(secrets_name, "-"))
+		connman_task_add_argument(task, "-s", secrets_name);
 
 	err = connman_task_run(task, l2tp_died, data, NULL, NULL, NULL);
 	if (err < 0) {
@@ -773,10 +982,68 @@ static int run_connect(struct l2tp_private_data *data,
 	}
 
 done:
+	g_free(l2tp_name);
+	g_free(ctrl_name);
+	g_free(pppd_name);
+	g_free(secrets_name);
+
+	if (l2tp_fd != -1)
+		close(l2tp_fd);
+
+	if (pppd_fd != -1)
+		close(pppd_fd);
+
+	if (secrets_fd != -1)
+		close(secrets_fd);
+
 	if (err)
 		l2tp_connect_done(data, -err);
 
 	return err;
+}
+
+static void request_input_secret_cb(struct vpn_provider *provider,
+			const char *local_host,
+			const char *remote_host,
+			const char *shared_secret,
+			int error, void *user_data)
+{
+	struct l2tp_private_data *data = user_data;
+
+	if (error || !shared_secret || !*shared_secret) {
+		DBG("Requesting shared secret failed: %s", strerror(error));
+		l2tp_connect_done(data, error ? error : -ENOENT);
+		return;
+	}
+
+	vpn_provider_set_string(provider, "L2TP.LocalHostname", local_host);
+	vpn_provider_set_string(provider, "L2TP.RemoteHostname", remote_host);
+	vpn_provider_set_string_hide_value(provider, "L2TP.SharedSecret",
+								shared_secret);
+}
+
+static bool request_shared_secret(struct vpn_provider *provider,
+							bool *use_challenge)
+{
+	const char *auth_file;
+	const char *secret;
+
+	*use_challenge = vpn_provider_get_boolean(provider, "L2TP.Challenge",
+									false);
+	if (!*use_challenge)
+		return false;
+
+	auth_file = vpn_provider_get_string(provider, "L2TP.AuthFile");
+	if (auth_file) {
+		DBG("Use auth file: %s", auth_file);
+		return false;
+	}
+
+	secret = vpn_provider_get_string(provider, "L2TP.SharedSecret");
+	if (secret && *secret)
+		return false; /* Already set */
+
+	return true;
 }
 
 static void request_input_cb(struct vpn_provider *provider,
@@ -785,6 +1052,8 @@ static void request_input_cb(struct vpn_provider *provider,
 			int error, void *user_data)
 {
 	struct l2tp_private_data *data = user_data;
+	const char *auth_file;
+	bool use_challenge;
 
 	if (error || (!username || !*username || !password || !*password)) {
 		DBG("Requesting credentials failed: %s", strerror(error));
@@ -796,7 +1065,11 @@ static void request_input_cb(struct vpn_provider *provider,
 	vpn_provider_set_string_hide_value(provider, "L2TP.Password",
 								password);
 
-	run_connect(data, username, password);
+	auth_file = vpn_provider_get_string(provider, "L2TP.AuthFile");
+	use_challenge = vpn_provider_get_boolean(provider, "L2TP.Challenge",
+								false);
+
+	run_connect(data, username, password, use_challenge, auth_file);
 }
 
 static int l2tp_connect(struct vpn_provider *provider,
@@ -805,7 +1078,11 @@ static int l2tp_connect(struct vpn_provider *provider,
 			void *user_data)
 {
 	struct l2tp_private_data *data;
-	const char *username, *password;
+	const char *username;
+	const char *password;
+	const char *auth_file;
+	bool request_secret;
+	bool use_challenge;
 	int err;
 
 	data = g_try_new0(struct l2tp_private_data, 1);
@@ -827,19 +1104,25 @@ static int l2tp_connect(struct vpn_provider *provider,
 
 	username = vpn_provider_get_string(provider, "L2TP.User");
 	password = vpn_provider_get_string(provider, "L2TP.Password");
+	auth_file = vpn_provider_get_string(provider, "L2TP.AuthFile");
 
 	DBG("user %s password %p", username, password);
 
+	request_secret = request_shared_secret(provider, &use_challenge);
+
 	if (!username || !*username || !password || !*password) {
-		err = request_input(provider, request_input_cb, dbus_sender,
-									data);
+		err = request_input(provider, request_input_cb,
+					request_secret ?
+						request_input_secret_cb : NULL,
+					dbus_sender, data);
 		if (err != -EINPROGRESS)
 			goto error;
 
 		return err;
 	}
 
-	return run_connect(data, username, password);
+	return run_connect(data, username, password, use_challenge, auth_file);
+
 
 error:
 	l2tp_connect_done(data, -err);
@@ -850,6 +1133,8 @@ error:
 
 static int l2tp_error_code(struct vpn_provider *provider, int exit_code)
 {
+	DBG("exit code %d", exit_code);
+
 	switch (exit_code) {
 	case 1:
 		return CONNMAN_PROVIDER_ERROR_CONNECT_FAILED;
@@ -863,7 +1148,10 @@ static void l2tp_disconnect(struct vpn_provider *provider)
 	if (!provider)
 		return;
 
+	DBG("");
+
 	vpn_provider_set_string_hide_value(provider, "L2TP.Password", NULL);
+	vpn_provider_set_string_hide_value(provider, "L2TP.SharedSecret", NULL);
 
 	connman_agent_cancel(provider);
 }
