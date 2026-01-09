@@ -1,5 +1,7 @@
 #!/usr/bin/python
 
+from gi.repository import GLib
+
 import sys
 from gi.repository import GObject as gobject
 
@@ -73,7 +75,7 @@ if __name__ == '__main__':
 
 	manager.RegisterCounter(path, dbus.UInt32(10), dbus.UInt32(period))
 
-	mainloop = gobject.MainLoop()
+	mainloop = GLib.MainLoop()
 	mainloop.run()
 
 	#manager.UnregisterCounter(path)
