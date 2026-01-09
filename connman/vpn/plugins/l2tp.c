@@ -133,7 +133,7 @@ struct l2tp_private_data {
 	char *if_name;
 	vpn_provider_connect_cb_t cb;
 	void *user_data;
-	bool remove_secrets_file;
+	bool create_secrets_file;
 };
 
 static void l2tp_connect_done(struct l2tp_private_data *data, int err)
@@ -143,6 +143,8 @@ static void l2tp_connect_done(struct l2tp_private_data *data, int err)
 
 	if (!data || !data->cb)
 		return;
+
+	DBG("");
 
 	/* Ensure that callback is called only once */
 	cb = data->cb;
@@ -154,6 +156,8 @@ static void l2tp_connect_done(struct l2tp_private_data *data, int err)
 
 static void free_private_data(struct l2tp_private_data *data)
 {
+	DBG("");
+
 	if (vpn_provider_get_plugin_data(data->provider) == data)
 		vpn_provider_set_plugin_data(data->provider, NULL);
 
@@ -568,30 +572,56 @@ static int l2tp_write_secret(struct vpn_provider *provider, int fd)
 	return err;
 }
 
-static void l2tp_died(struct connman_task *task, int exit_code, void *user_data)
+static bool is_file_symlink(const char *filename)
 {
-	struct l2tp_private_data *data = user_data;
+	int fd;
+
+	if (!filename || !*filename)
+		return false;
+
+	fd = open(filename, O_WRONLY|O_NOFOLLOW|O_CLOEXEC);
+	if (fd == -1 && errno == ELOOP)
+		return true;
+
+	if (fd >= 0)
+		close(fd);
+
+	return false;
+}
+
+static void unlink_files(struct l2tp_private_data *data)
+{
 	char *conf_file;
 
-	DBG("died of %d", exit_code);
-
-	vpn_died(task, exit_code, data->provider);
-
 	conf_file = g_strconcat(VPN_STATEDIR, "/connman-xl2tpd.conf", NULL);
-	unlink(conf_file);
+	if (!is_file_symlink(conf_file))
+		unlink(conf_file);
 	g_free(conf_file);
 
 	conf_file = g_strconcat(VPN_STATEDIR, "/connman-ppp-option.conf", NULL);
-	unlink(conf_file);
+	if (!is_file_symlink(conf_file))
+		unlink(conf_file);
 	g_free(conf_file);
 
-	if (data->remove_secrets_file) {
+	if (data->create_secrets_file) {
 		conf_file = g_strconcat(VPN_STATEDIR,
 						"/connman-xl2tpd-secrets.conf",
 						NULL);
-		unlink(conf_file);
+		if (!is_file_symlink(conf_file))
+			unlink(conf_file);
 		g_free(conf_file);
 	}
+}
+
+static void l2tp_died(struct connman_task *task, int exit_code, void *user_data)
+{
+	struct l2tp_private_data *data = user_data;
+
+	DBG("exit code %d", exit_code);
+
+	vpn_died(task, exit_code, data->provider);
+
+	unlink_files(data);
 
 	free_private_data(data);
 }
@@ -895,6 +925,22 @@ static int request_input(struct vpn_provider *provider,
 	return -EINPROGRESS;
 }
 
+static int open_file(const char *filename)
+{
+	int fd;
+
+	if (!filename || !*filename)
+		return -EINVAL;
+
+	fd = open(filename, O_RDWR|O_NOFOLLOW|O_CREAT|O_TRUNC, S_IRUSR|S_IWUSR);
+	if (fd < 0 && errno == ELOOP) {
+		connman_error("Refusing to overwrite symlink %s", filename);
+		return -EACCES;
+	}
+
+	return fd;
+}
+
 static int run_connect(struct l2tp_private_data *data,
 			const char *username, const char *password,
 			bool use_challenge, const char *auth_file)
@@ -921,24 +967,16 @@ static int run_connect(struct l2tp_private_data *data,
 
 	l2tp_name = g_strconcat(VPN_STATEDIR, "/connman-xl2tpd.conf", NULL);
 
-	l2tp_fd = open(l2tp_name, O_RDWR|O_CREAT|O_TRUNC, S_IRUSR|S_IWUSR);
+	l2tp_fd = open_file(l2tp_name);
 	if (l2tp_fd < 0) {
 		connman_error("Error writing l2tp config");
 		err = -EIO;
 		goto done;
 	}
 
-	ctrl_name = g_strconcat(VPN_STATEDIR, "/connman-xl2tpd-control", NULL);
-
-	if (mkfifo(ctrl_name, S_IRUSR|S_IWUSR) != 0 && errno != EEXIST) {
-		connman_error("Error creating xl2tp control pipe");
-		err = -EIO;
-		goto done;
-	}
-
 	pppd_name = g_strconcat(VPN_STATEDIR, "/connman-ppp-option.conf", NULL);
 
-	pppd_fd = open(pppd_name, O_RDWR|O_CREAT|O_TRUNC, S_IRUSR|S_IWUSR);
+	pppd_fd = open_file(pppd_name);
 	if (pppd_fd < 0) {
 		connman_error("Error writing pppd config");
 		err = -EIO;
@@ -951,22 +989,37 @@ static int run_connect(struct l2tp_private_data *data,
 						"/connman-xl2tpd-secrets.conf",
 						NULL);
 
-		secrets_fd = open(secrets_name, O_RDWR|O_CREAT|O_TRUNC,
-						S_IRUSR|S_IWUSR);
+		secrets_fd = open_file(secrets_name);
 		if (secrets_fd < 0) {
-			connman_error("Error writing l2tp secrets");
+			connman_error("Error opening l2tp secrets for writing");
 			err = -EIO;
 			goto done;
 		}
 
 		/* Toggle the created file to be removed at shutdown */
-		data->remove_secrets_file = true;
-		l2tp_write_secret(provider, secrets_fd);
+		data->create_secrets_file = true;
+	}
+
+	/* Create control pipe as last to allow file checks to go through. */
+	ctrl_name = g_strconcat(VPN_STATEDIR, "/connman-xl2tpd-control", NULL);
+
+	if (mkfifo(ctrl_name, S_IRUSR|S_IWUSR) != 0 && errno != EEXIST) {
+		connman_error("Error creating xl2tp control pipe");
+		err = -EIO;
+		goto done;
 	}
 
 	l2tp_write_config(provider, pppd_name, l2tp_fd);
 
 	write_pppd_option(provider, pppd_fd);
+
+	if (data->create_secrets_file) {
+		if (l2tp_write_secret(provider, secrets_fd)) {
+			connman_error("Error writing l2tp secrets file");
+			err = -EIO;
+			goto done;
+		}
+	}
 
 	connman_task_add_argument(task, "-D", NULL);
 	connman_task_add_argument(task, "-C", ctrl_name);
@@ -996,8 +1049,16 @@ done:
 	if (secrets_fd != -1)
 		close(secrets_fd);
 
-	if (err)
+	if (err) {
 		l2tp_connect_done(data, -err);
+		/*
+		 * The task has not been run so l2tp_died() never gets called,
+		 * unlink the files when error happens to avoid leaving them
+		 * behind.
+		 */
+		unlink_files(data);
+		free_private_data(data);
+	}
 
 	return err;
 }
