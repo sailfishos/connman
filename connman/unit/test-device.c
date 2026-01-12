@@ -159,6 +159,12 @@ void connman_network_set_group(struct connman_network *network,
 	return;
 }
 
+int connman_network_set_link_speed(struct connman_network *network,
+						uint32_t link_speed)
+{
+	return 0;
+}
+
 struct connman_network *connman_network_create(const char *identifier,
 						enum connman_network_type type)
 {
