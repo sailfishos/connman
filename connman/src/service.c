@@ -310,6 +310,7 @@ struct connman_service {
 	enum connman_service_error error;
 	enum connman_service_connect_reason connect_reason;
 	uint8_t strength;
+	uint32_t link_speed;
 	bool favorite;
 	bool immutable;
 	bool hidden;
@@ -9953,6 +9954,22 @@ void connman_service_update_strength_from_network(struct connman_network *networ
 		if (service->strength != strength) {
 			service->strength = strength;
 			strength_changed(service);
+		}
+	}
+}
+
+void connman_service_update_link_speed_from_network(struct connman_network *network)
+{
+	struct connman_service *service;
+
+	service = connman_service_lookup_from_network(network);
+	if (service && service->network) {
+		uint32_t link_speed;
+
+		link_speed = connman_network_get_link_speed(service->network);
+		if (service->link_speed != link_speed) {
+			service->link_speed = link_speed;
+			link_changed(service);
 		}
 	}
 }
