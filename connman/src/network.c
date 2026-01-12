@@ -67,6 +67,7 @@ struct connman_network {
 	bool roaming;
 	uint8_t strength;
 	uint16_t frequency;
+	uint32_t link_speed;
 	char *identifier;
 	char *name;
 	char *node;
@@ -2331,6 +2332,31 @@ int connman_network_set_strength(struct connman_network *network,
 uint8_t connman_network_get_strength(struct connman_network *network)
 {
 	return network->strength;
+}
+
+int connman_network_set_link_speed(struct connman_network *network,
+							uint32_t link_speed)
+{
+	if (!network)
+		return -ENOENT;
+
+	if (network->link_speed == link_speed)
+		return -EALREADY;
+
+	DBG("network %p link speed %d", network, link_speed);
+
+	network->link_speed = link_speed;
+	connman_service_update_link_speed_from_network(network);
+
+	return 0;
+}
+
+int32_t connman_network_get_link_speed(struct connman_network *network)
+{
+	if (!network)
+		return -ENOENT;
+
+	return network->link_speed;
 }
 
 int connman_network_set_frequency(struct connman_network *network,
