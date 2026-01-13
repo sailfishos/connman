@@ -152,6 +152,9 @@ int connman_network_set_name(struct connman_network *network,
 int connman_network_set_strength(struct connman_network *network,
 						uint8_t strength);
 uint8_t connman_network_get_strength(struct connman_network *network);
+int connman_network_set_link_speed(struct connman_network *network,
+						uint32_t link_speed);
+int32_t connman_network_get_link_speed(struct connman_network *network);
 int connman_network_set_frequency(struct connman_network *network,
 					uint16_t frequency);
 uint16_t connman_network_get_frequency(struct connman_network *network);

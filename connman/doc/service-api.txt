@@ -240,6 +240,13 @@ Properties	string State [readonly]
 			This property will not be present for Ethernet
 			devices.
 
+		uint32 LinkSpeed [readonly]
+
+			Indicates the link speed of the service. The value
+			is represented as Mb/s, value 0 being unavailable.
+
+			This property is present only for Ethernet devices.
+
 		boolean Favorite [readonly]
 
 			Will be true if a cable is plugged in or the user

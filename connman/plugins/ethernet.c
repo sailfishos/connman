@@ -130,6 +130,43 @@ static int get_dsa_port(const char *ifname)
 	return dsaport;
 }
 
+static uint32_t get_link_speed(const char *ifname, int *err)
+{
+	struct ifreq ifr;
+	struct ethtool_cmd cmd;
+	int sk;
+	uint32_t speed = 0;
+
+	if (!err)
+		return 0;
+
+	sk = socket(AF_INET, SOCK_STREAM, 0);
+	if (sk < 0) {
+		*err = -errno;
+		return 0;
+	}
+
+	memset(&ifr, 0, sizeof(ifr));
+	stpncpy(ifr.ifr_name, ifname, sizeof(ifr.ifr_name) - 1);
+
+	cmd.cmd =  ETHTOOL_GSET;
+	ifr.ifr_data = (caddr_t)&cmd;
+
+	*err = ioctl(sk, SIOCETHTOOL, &ifr);
+	if (*err < 0) {
+		connman_error("failed to request Ethernet link speed");
+		close(sk);
+		return 0;
+	}
+
+	speed = ethtool_cmd_speed(&cmd);
+	DBG ("Ethernet speed %d Mbps", speed);
+
+	close(sk);
+
+	return speed;
+}
+
 static int eth_network_probe(struct connman_network *network)
 {
 	DBG("network %p", network);
@@ -175,6 +212,8 @@ static void add_network(struct connman_device *device,
 	struct connman_network *network;
 	int index;
 	char *ifname;
+	uint32_t speed;
+	int err = 0;
 
 	network = connman_network_create("carrier",
 					CONNMAN_NETWORK_TYPE_ETHERNET);
@@ -216,6 +255,12 @@ static void add_network(struct connman_device *device,
 
 		connman_network_set_group(network, group);
 	}
+
+	speed = get_link_speed(ifname, &err);
+	if (!speed && err < 0)
+		DBG("Error getting link speed: %d/%s", err, strerror(-err));
+
+	connman_network_set_link_speed(network, speed);
 
 	ethernet->network = network;
 	g_free(ifname);

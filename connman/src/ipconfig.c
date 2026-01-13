@@ -2645,7 +2645,10 @@ void __connman_ipconfig_append_ethernet(struct connman_ipconfig *ipconfig,
 							DBusMessageIter *iter)
 {
 	struct connman_ipdevice *ipdevice;
+	struct connman_service *service;
+	struct connman_network *network;
 	const char *method = "auto";
+	uint32_t link_speed;
 
 	connman_dbus_dict_append_basic(iter, "Method",
 						DBUS_TYPE_STRING, &method);
@@ -2671,6 +2674,18 @@ void __connman_ipconfig_append_ethernet(struct connman_ipconfig *ipconfig,
 	if (ipdevice->mtu > 0)
 		connman_dbus_dict_append_basic(iter, "MTU",
 					DBUS_TYPE_UINT16, &ipdevice->mtu);
+
+	service = __connman_service_lookup_from_index(ipdevice->index);
+	if (!service)
+		return;
+
+	network = __connman_service_get_network(service);
+	if (!network)
+		return;
+
+	link_speed = connman_network_get_link_speed(network);
+	connman_dbus_dict_append_basic(iter, "LinkSpeed", DBUS_TYPE_UINT32,
+								&link_speed);
 }
 
 void __connman_ipconfig_load(struct connman_ipconfig *ipconfig,
