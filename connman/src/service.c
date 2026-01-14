@@ -6358,6 +6358,7 @@ bool __connman_service_remove(struct connman_service *service)
 	} cleared_properties[] = {
 		SVC_PROP(PROP_PASSPHRASE, passphrase, GET_PASSPHRASE_ACCESS),
 		SVC_PROP(PROP_IDENTITY, identity, GET_IDENTITY_ACCESS),
+		SVC_PROP(PROP_EAP, eap, GET_EAP_ACCESS),
 		SVC_PROP("AnonymousIdentity", anonymous_identity,
 				GET_IDENTITY_ACCESS),
 		SVC_PROP("SubjectMatch", subject_match, GET_ACCESS_ACCESS),
