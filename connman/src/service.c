@@ -6393,6 +6393,8 @@ bool __connman_service_remove(struct connman_service *service)
 //	if (!service->favorite && !is_idle(service->state))
 //		return false;
 
+	__connman_service_disconnect(service);
+
 	/*
 	 * We don't want the service files to stay around forever unless the
 	 * service file belongs to a VPN connection. The VPN connection specific
@@ -6403,8 +6405,6 @@ bool __connman_service_remove(struct connman_service *service)
 	 */
 	if (service->type != CONNMAN_SERVICE_TYPE_VPN)
 		__connman_storage_remove_service(service->identifier);
-
-	__connman_service_disconnect(service);
 
 	for (i = 0; i < G_N_ELEMENTS(cleared_properties); i++) {
 		char **member = &G_STRUCT_MEMBER(char *, service,
