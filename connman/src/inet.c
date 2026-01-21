@@ -3950,7 +3950,7 @@ int delete_connection(enum nf_conntrack_msg_type type,
 		s6_addr_buf = nfct_get_attr(ct, ATTR_IPV6_DST);
 		memcpy(&sa6_out.sin6_addr.s6_addr, s6_addr_buf,
 						sizeof(struct in6_addr));
-		sa6_out.sin6_port = nfct_get_attr_u16(ct, ATTR_PORT_SRC);
+		sa6_out.sin6_port = nfct_get_attr_u16(ct, ATTR_PORT_DST);
 
 		ss_in = (struct sockaddr_storage *)&sa6_in;
 		ss_out = (struct sockaddr_storage *)&sa6_out;
