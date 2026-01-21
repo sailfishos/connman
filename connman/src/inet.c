@@ -3825,6 +3825,7 @@ struct nfct_cb_data {
 	enum connman_ipconfig_type type;
 	struct in_addr exclude_ipv4;
 	struct in6_addr exclude_ipv6;
+	struct firewall_context *firewall;
 	int counter;
 };
 
@@ -3855,7 +3856,7 @@ static void print_connection(struct nf_conntrack *ct, int counter)
 		switch (family) {
 		case AF_INET:
 			src_ipv4.s_addr = nfct_get_attr_u32(ct, ATTR_IPV4_SRC);
-			dst_ipv4.s_addr = nfct_get_attr_u32(ct, ATTR_IPV4_SRC);
+			dst_ipv4.s_addr = nfct_get_attr_u32(ct, ATTR_IPV4_DST);
 			src_port = nfct_get_attr_u16(ct, ATTR_PORT_SRC);
 			dst_port = nfct_get_attr_u16(ct, ATTR_PORT_DST);
 
@@ -3900,6 +3901,7 @@ int delete_connection(enum nf_conntrack_msg_type type,
 	struct in6_addr addr_ipv6;
 	const void* s6_dst_addr;
 	cb_data->counter++;
+	int err;
 
 	print_connection(ct, cb_data->counter);
 
@@ -3940,12 +3942,14 @@ int delete_connection(enum nf_conntrack_msg_type type,
 		return NFCT_CB_CONTINUE;
 	}
 
+	err = __connman_firewall_add_block_rule(cb_data->firewall, NULL, NULL)
+
 	DBG("Connection #%d deleted", cb_data->counter);
 
 	return NFCT_CB_CONTINUE;
 }
 
-int get_in_addr(int family, struct connman_ipaddress *ipaddress,
+int set_exclude_addr(int family, struct connman_ipaddress *ipaddress,
 						struct nfct_cb_data *data)
 {
 	/* No ipaddress = valid case here -> bail out silently */
@@ -4002,10 +4006,10 @@ int connman_inet_cleanup_existing_connections(enum connman_ipconfig_type type,
 
 	cb_data.handle = handle;
 
-	if (get_in_addr(AF_INET, ipaddress4, &cb_data))
+	if (set_exclude_addr(AF_INET, ipaddress4, &cb_data))
 		DBG("failed to set IPv4 exclude");
 
-	if (get_in_addr(AF_INET6, ipaddress6, &cb_data))
+	if (set_exclude_addr(AF_INET6, ipaddress6, &cb_data))
 		DBG("failed to set IPv6 exclude");
 
 	switch (type) {
@@ -4029,6 +4033,14 @@ int connman_inet_cleanup_existing_connections(enum connman_ipconfig_type type,
 	}
 
 	cb_data.type = type;
+	cb_data.firewall = __connman_firewall_create();
+	if (!cb_data.firewall) {
+		connman_error("Error creating connection blocking firewall");
+		err = -EINVAL;
+		goto out;
+	}
+
+	__connman_firewall_begin(cb_data.firewall);
 
 	/* Register the filter */
 	if (nfct_callback_register(handle, NFCT_T_ALL, delete_connection,
@@ -4046,9 +4058,12 @@ int connman_inet_cleanup_existing_connections(enum connman_ipconfig_type type,
 		goto out;
 	}
 
+	__connman_firewall_end(cb_data.firewall);
+
 	DBG("Connections reset successfully.");
 
 out:
+	__connman_firewall_destroy(cb_data.firewall);
 	nfct_callback_unregister(handle);
 	nfct_close(handle);
 	nfct_destroy(ct);
