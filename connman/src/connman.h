@@ -1238,6 +1238,13 @@ int __connman_firewall_enable_marking(struct firewall_context *ctx,
 					char *id, const char *src_ip,
 					uint32_t mark);
 int __connman_firewall_disable_marking(struct firewall_context *ctx);
+int __connman_firewall_begin(struct firewall_context *ctx);
+int __connman_firewall_add_block_rule(struct firewall_context *ctx, int family,
+					struct sockaddr_storage *sa_in,
+					const char *iface_in,
+					struct sockaddr_storage *sa_out,
+					const char *iface_out);
+int __connman_firewall_end(struct firewall_context *ctx);
 
 bool __connman_firewall_is_up(void);
 
