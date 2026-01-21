@@ -856,7 +856,7 @@ int __connman_firewall_begin(struct firewall_context *ctx)
 
 	err = firewall_disable_rules(ctx);
 	if (!err)
-		firewall_remove_rules(ctx)
+		firewall_remove_rules(ctx);
 
 	return err;
 }
@@ -870,8 +870,8 @@ int __connman_firewall_add_block_rule(struct firewall_context *ctx, int family,
 	char *rule;
 	char ipaddr_in[INET6_ADDRSTRLEN] = { 0 };
 	char ipaddr_out[INET6_ADDRSTRLEN] = { 0 };
-	uint16_t port_in;
-	uint16_t port_out;
+	uint16_t port_in = 0;
+	uint16_t port_out = 0;
 	int err;
 
 	if (!ctx)
@@ -904,35 +904,43 @@ int __connman_firewall_add_block_rule(struct firewall_context *ctx, int family,
 		struct sockaddr_in6 *sin6_out;
 
 		if (ss_in) {
-			sin6_in = (struct sockaddr_in6*)ss_in;'
-			if (!inet_ntop(AF_INET6, &sin6_in->sin_addr, ipaddr_in,
+			sin6_in = (struct sockaddr_in6*)ss_in;
+			if (!inet_ntop(AF_INET6, &sin6_in->sin6_addr, ipaddr_in,
 							INET6_ADDRSTRLEN))
 				DBG("Cannot parse IPv6 in address");
 
-			port_in = ntohs(sin6_in->sin_port);
+			port_in = ntohs(sin6_in->sin6_port);
 		}
 
 		if (ss_out) {
 			sin6_out = (struct sockaddr_in6*)ss_out;
-			if (!inet_ntop(AF_INET6, &sin6_out->sin_addr,
+			if (!inet_ntop(AF_INET6, &sin6_out->sin6_addr,
 							ipaddr_out,
 							INET6_ADDRSTRLEN))
 				DBG("Cannot parse IPv6 out address");
 
-			port_out = ntohs(sin6_out->sin_port);
+			port_out = ntohs(sin6_out->sin6_port);
 		}
 	} else {
 		return -ENOTSUP;
 	}
 
-	rule = g_strdup_printf("-s %s -sport %d -d %s -dport %d -i %s -o %s "
-				"-j REJECT", ipadd_in, port_in, ipaddr_out,
-				port_out, iface_in, iface_out)
+	rule = g_strdup_printf("-s %s -sport %d -d %s -dport %d",
+				ipaddr_in, port_in, ipaddr_out, port_out);
+	if (iface_in)
+		rule = g_strconcat(rule, " -i ", iface_in, NULL);
+
+	if (iface_out)
+		rule = g_strconcat(rule, " -o ", iface_out, NULL);
+
+	rule = g_strconcat(rule, "-j REJECT", NULL);
 
 	err = firewall_add_rule(ctx, __connman_iptables_append, NULL, family,
 				"filter", "OUTPUT", rule);
 	if (err)
 		connman_warn("cannot add firewall block rule \"%s\"", rule);
+	else
+		DBG("Rule added \"%s\"", rule);
 
 	g_free(rule);
 
