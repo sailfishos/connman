@@ -38,6 +38,16 @@
 
 #include "../src/connman.h"
 
+/* Dummies */
+
+int __connman_firewall_begin(struct firewall_context *ctx) { return 0; }
+int __connman_firewall_add_block_rule(struct firewall_context *ctx, int family,
+					struct sockaddr_storage *sa_in,
+					const char *iface_in,
+					struct sockaddr_storage *sa_out,
+					const char *iface_out) { return 0; }
+int __connman_firewall_end(struct firewall_context *ctx) { return 0; }
+
 static GTimer *timer;
 
 static GMainLoop *main_loop;
