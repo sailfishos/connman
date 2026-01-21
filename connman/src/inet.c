@@ -3897,38 +3897,63 @@ int delete_connection(enum nf_conntrack_msg_type type,
 				struct nf_conntrack *ct, void *user_data)
 {
 	struct nfct_cb_data *cb_data = (struct nfct_cb_data*)user_data;
-	struct in_addr addr_ipv4;
-	struct in6_addr addr_ipv6;
-	const void* s6_dst_addr;
+	struct sockaddr_storage *ss_in;
+	struct sockaddr_storage *ss_out;
+	struct sockaddr_in sa_in = {0};
+	struct sockaddr_in sa_out = {0};
+	struct sockaddr_in6 sa6_in = {0};
+	struct sockaddr_in6 sa6_out = {0};
+	const void* s6_addr_buf = {0};
 	cb_data->counter++;
+	int family;
 	int err;
 
 	print_connection(ct, cb_data->counter);
 
-	switch (nfct_get_attr_u8(ct, ATTR_ORIG_L3PROTO)) {
+	family = nfct_get_attr_u8(ct, ATTR_ORIG_L3PROTO);
+	switch (family) {
 	case AF_INET:
 		if (cb_data->type == CONNMAN_IPCONFIG_TYPE_IPV6)
 			return NFCT_CB_CONTINUE;
 
-		addr_ipv4.s_addr = nfct_get_attr_u32(ct, ATTR_IPV4_SRC);
-		if (cb_data->exclude_ipv4.s_addr == addr_ipv4.s_addr) {
+		sa_in.sin_addr.s_addr = nfct_get_attr_u32(ct, ATTR_IPV4_SRC);
+		sa_in.sin_port = nfct_get_attr_u16(ct, ATTR_PORT_SRC);
+
+		if (cb_data->exclude_ipv4.s_addr == sa_in.sin_addr.s_addr) {
 			DBG("excluded address detected");
 			return NFCT_CB_CONTINUE;
 		}
+
+		sa_out.sin_addr.s_addr = nfct_get_attr_u32(ct, ATTR_IPV4_DST);
+		sa_out.sin_port = nfct_get_attr_u16(ct, ATTR_PORT_DST);
+
+		ss_in = (struct sockaddr_storage *)&sa_in;
+		ss_out = (struct sockaddr_storage *)&sa_out;
 
 		break;
 	case AF_INET6:
 		if (cb_data->type == CONNMAN_IPCONFIG_TYPE_IPV4)
 			return NFCT_CB_CONTINUE;
 
-		s6_dst_addr = nfct_get_attr(ct, ATTR_IPV6_SRC);
-		memcpy(&addr_ipv6.s6_addr, s6_dst_addr,
+		s6_addr_buf = nfct_get_attr(ct, ATTR_IPV6_SRC);
+		memcpy(&sa6_in.sin6_addr.s6_addr, s6_addr_buf,
 						sizeof(struct in6_addr));
-		if (!memcmp(cb_data->exclude_ipv6.s6_addr, addr_ipv6.s6_addr,
-						sizeof(addr_ipv6.s6_addr))) {
+		sa6_in.sin6_port = nfct_get_attr_u16(ct, ATTR_PORT_SRC);
+
+		if (!memcmp(cb_data->exclude_ipv6.s6_addr,
+						sa6_in.sin6_addr.s6_addr,
+						sizeof(struct in6_addr))) {
 			DBG("excluded IPv6 address detected");
 			return NFCT_CB_CONTINUE;
 		}
+
+		s6_addr_buf = nfct_get_attr(ct, ATTR_IPV6_DST);
+		memcpy(&sa6_out.sin6_addr.s6_addr, s6_addr_buf,
+						sizeof(struct in6_addr));
+		sa6_out.sin6_port = nfct_get_attr_u16(ct, ATTR_PORT_SRC);
+
+		ss_in = (struct sockaddr_storage *)&sa6_in;
+		ss_out = (struct sockaddr_storage *)&sa6_out;
 
 		break;
 	default:
@@ -3942,7 +3967,10 @@ int delete_connection(enum nf_conntrack_msg_type type,
 		return NFCT_CB_CONTINUE;
 	}
 
-	err = __connman_firewall_add_block_rule(cb_data->firewall, NULL, NULL)
+	err = __connman_firewall_add_block_rule(cb_data->firewall, family,
+						ss_in, NULL, ss_out, NULL);
+	if (err)
+		DBG("connection not blocked");
 
 	DBG("Connection #%d deleted", cb_data->counter);
 
