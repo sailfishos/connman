@@ -385,6 +385,7 @@ struct connman_service {
 	struct connman_access_service_policy *policy;
 	char *access;
 	gboolean disabled;
+	bool removing;
 };
 
 static const char *service_get_access(struct connman_service *service);
@@ -2373,6 +2374,17 @@ bool connman_service_set_autoconnect(struct connman_service *service,
 							service->autoconnect);
 
 	return true;
+}
+
+static void service_set_removing(struct connman_service *service,
+							bool removing)
+{
+	const bool newval = removing ? true : false;
+	if (service->removing != newval) {
+		service->removing = newval;
+		// TODO maybe propagate to D-Bus/notify this?
+		//service_boolean_changed(service, &service_removing);
+	}
 }
 
 static void append_security(DBusMessageIter *iter, void *user_data)
@@ -6401,8 +6413,15 @@ bool __connman_service_remove(struct connman_service *service)
 	 * for VPNs cannot operate. The VPN connection service file is removed
 	 * when vpnd removes the connection. It should not be removed here.
 	 */
-	if (service->type != CONNMAN_SERVICE_TYPE_VPN)
+	if (service->type != CONNMAN_SERVICE_TYPE_VPN) {
 		__connman_storage_remove_service(service->identifier);
+
+		/*
+		 * Prevent other IP family type from propagating in state
+		 * machine after one is disconnected during removal.
+		 */
+		service_set_removing(service, true);
+	}
 
 	__connman_service_disconnect(service);
 
@@ -6428,6 +6447,8 @@ bool __connman_service_remove(struct connman_service *service)
 	if (service->network) {
 		/* The network is still alive (but not saved anymore) */
 		service_set_new_service(service, true);
+		/* The service is not being removed anymore. */
+		service_set_removing(service, false);
 	} else {
 		/* No network for this service, it's gone for good */
 		service_remove(service);
@@ -8100,6 +8121,13 @@ static int service_indicate_state(struct connman_service *service)
 		break;
 
 	case CONNMAN_SERVICE_STATE_READY:
+		/*
+		 * If the service is being removed and when the other IP type
+		 * is in ready state (most likely IPv6)
+		 */
+		if (service->removing)
+			break;
+
 		set_error(service, CONNMAN_SERVICE_ERROR_UNKNOWN);
 
 		service_set_new_service(service, false);
@@ -8214,6 +8242,13 @@ static int service_indicate_state(struct connman_service *service)
 			new_state != CONNMAN_SERVICE_STATE_ONLINE)) {
 		__connman_notifier_disconnect(service->type);
 	}
+
+	/*
+	 * If the service is being removed and is either ready or online skip
+	 * any remaining actions.
+	 */
+	if (is_connected(new_state) && service->removing)
+		return 0;
 
 	if (new_state == CONNMAN_SERVICE_STATE_ONLINE) {
 		__connman_notifier_enter_online(service->type);
