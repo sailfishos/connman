@@ -925,13 +925,21 @@ int __connman_firewall_add_block_rule(struct firewall_context *ctx, int family,
 		return -ENOTSUP;
 	}
 
+	if (iface_in && iface_out) {
+		connman_warn("cannot use both in %s and out %s interfaces",
+							iface_in, iface_out);
+		return -ENOTSUP;
+	}
+
 	rule = g_strdup_printf("-s %s -sport %d -d %s -dport %d",
 				ipaddr_in, port_in, ipaddr_out, port_out);
-	if (iface_in)
+	if (iface_in) {
 		rule = g_strconcat(rule, " -i ", iface_in, NULL);
+	}
 
-	if (iface_out)
+	if (iface_out) {
 		rule = g_strconcat(rule, " -o ", iface_out, NULL);
+	}
 
 	rule = g_strconcat(rule, "-j REJECT", NULL);
 
