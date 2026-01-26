@@ -847,6 +847,90 @@ int __connman_firewall_disable_marking(struct firewall_context *ctx)
 	return firewall_disable_rules(ctx);
 }
 
+int __connman_firewall_begin(struct firewall_context *ctx)
+{
+	int err;
+
+	if (!ctx)
+		return -EINVAL;
+
+	err = firewall_disable_rules(ctx);
+	if (!err)
+		firewall_remove_rules(ctx);
+
+	return err;
+}
+
+int __connman_firewall_add_block_rule(struct firewall_context *ctx, int family,
+					const char *src, const char *iface_src,
+					const char *dst, const char *iface_dst)
+{
+	char *rule;
+	char ipaddr_src[INET6_ADDRSTRLEN] = { 0 };
+	char ipaddr_dst[INET6_ADDRSTRLEN] = { 0 };
+	uint16_t port_src = 0;
+	uint16_t port_dst = 0;
+	int id;
+
+	if (!ctx)
+		return -EINVAL;
+
+	if (iface_src && iface_dst) {
+		connman_warn("cannot use both in %s and out %s interfaces",
+							iface_src, iface_dst);
+		return -ENOTSUP;
+	}
+
+	rule = g_strdup_printf("-s %s -sport %d -d %s -dport %d",
+				ipaddr_src, port_src, ipaddr_dst, port_dst);
+	if (iface_src) {
+		rule = g_strconcat(rule, " -i ", iface_src, NULL);
+	}
+
+	if (iface_dst) {
+		rule = g_strconcat(rule, " -o ", iface_dst, NULL);
+	}
+
+	rule = g_strconcat(rule, "-j REJECT", NULL);
+
+	id = firewall_add_rule(ctx, __connman_iptables_append, NULL, family,
+				"filter", iface_dst ? "OUTPUT" : "INPUT", rule);
+	if (id)
+		DBG("Rule %d added \"%s\"", id, rule);
+
+	g_free(rule);
+
+	return id;
+}
+
+int __connman_firewall_remove_rule(struct firewall_context *ctx, int id)
+{
+	if (!ctx || !id)
+		return -EINVAL;
+
+	
+}
+
+int __connman_firewall_execute(struct firewall_context *ctx)
+{
+	if (!ctx)
+		return -EINVAL;
+
+	return firewall_enable_rules(ctx);
+}
+
+void __connman_firewall_end(struct firewall_context *ctx)
+{
+	int err;
+
+	if (!ctx)
+		return;
+
+	err = firewall_disable_rules(ctx);
+	if (!err)
+		firewall_remove_rules(ctx);
+}
+
 static void iterate_chains_cb(const char *chain_name, void *user_data)
 {
 	GSList **chains = user_data;

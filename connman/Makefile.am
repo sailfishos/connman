@@ -161,7 +161,8 @@ endif
 src_connmand_LDADD = gdbus/libgdbus-internal.la $(builtin_libadd) \
 			@GIO_LIBS@ @GOBJECT_LIBS@ @GLIB_LIBS@ @DBUS_LIBS@ \
 			@GNUTLS_LIBS@ @IPHB_LIBS@ @LIBIPTC_LIBS@ \
-			@DBUSACCESS_LIBS@ -lresolv -ldl -lrt
+			@DBUSACCESS_LIBS@ -lresolv -ldl -lrt \
+			-lnetfilter_conntrack
 
 src_connmand_LDFLAGS = -Wl,--export-dynamic \
 				-Wl,--version-script=$(srcdir)/src/connman.ver
@@ -221,7 +222,7 @@ vpn_connman_vpnd_SOURCES = $(builtin_vpn_sources) $(backtrace_sources) \
 
 vpn_connman_vpnd_LDADD = gdbus/libgdbus-internal.la $(builtin_vpn_libadd) \
 				@GLIB_LIBS@ @DBUS_LIBS@ @GNUTLS_LIBS@ @DBUSACCESS_LIBS@ \
-				-lresolv -ldl
+				-lresolv -ldl -lnetfilter_conntrack
 
 vpn_connman_vpnd_LDFLAGS = -Wl,--export-dynamic \
 				-Wl,--version-script=$(srcdir)/vpn/vpn.ver
@@ -475,7 +476,7 @@ if XTABLES
 unit_test_firewall_iptables_SOURCES = $(backtrace_sources) src/connman.h \
 				src/log.c src/inotify.c src/dbus.c src/error.c \
 				src/inet.c src/iptables-validate.c \
-				src/shared/util.c unit/test-firewall-iptables.c
+				src/shared/util.c unit/nfct_dummy.c unit/test-firewall-iptables.c
 unit_test_firewall_iptables_LDADD = @GLIB_LIBS@ @DBUS_LIBS@ -ldl
 endif
 
@@ -674,12 +675,12 @@ tools_stats_tool_LDADD = @GLIB_LIBS@
 
 tools_dhcp_test_SOURCES = $(backtrace_sources) src/log.c src/util.c \
 		 $(gdhcp_sources) src/inet.c tools/dhcp-test.c src/shared/arp.c \
-		src/wakeup_timer.c
+		src/wakeup_timer.c unit/nfct_dummy.c
 tools_dhcp_test_LDADD = @GLIB_LIBS@ -ldl
 
 tools_dhcp_server_test_SOURCES =  $(backtrace_sources) src/log.c src/util.c \
-		$(gdhcp_sources) src/inet.c tools/dhcp-server-test.c src/shared/arp.c \
-		src/wakeup_timer.c 
+		$(gdhcp_sources) src/inet.c tools/dhcp-server-test.c \
+		src/shared/arp.c src/wakeup_timer.c unit/nfct_dummy.c
 tools_dhcp_server_test_LDADD = @GLIB_LIBS@ -ldl
 
 tools_dbus_test_SOURCES = tools/dbus-test.c
@@ -715,7 +716,7 @@ tools_iptables_unit_CFLAGS = @DBUS_CFLAGS@ @GLIB_CFLAGS@ @XTABLES_CFLAGS@ \
 tools_iptables_unit_SOURCES = $(backtrace_sources) src/log.c src/storage.c \
 		src/inotify.c src/iptables.c src/nat.c \
 		src/inet.c src/iptables-validate.c tools/iptables-unit.c \
-		src/error.c src/dbus.c src/shared/util.c
+		src/error.c src/dbus.c src/shared/util.c unit/nfct_dummy.c
 tools_iptables_unit_LDADD = @GLIB_LIBS@ @DBUS_LIBS@ @XTABLES_LIBS@ @LIBIPTC_LIBS@ -ldl
 
 tools_ip6tables_test_SOURCES = $(backtrace_sources) src/log.c \
