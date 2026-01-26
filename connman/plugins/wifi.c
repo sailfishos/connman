@@ -68,12 +68,14 @@
 #define BGSCAN_DEFAULT "simple:30:-65:300"
 #define AUTOSCAN_EXPONENTIAL "exponential:3:300"
 #define AUTOSCAN_SINGLE "single:3"
+#define SCAN_MAX_DURATION 10
 
 #define P2P_FIND_TIMEOUT 30
 #define P2P_CONNECTION_TIMEOUT 100
 #define P2P_LISTEN_PERIOD 500
 #define P2P_LISTEN_INTERVAL 2000
 
+#define ASSOC_STATUS_AUTH_TIMEOUT 16
 #define ASSOC_STATUS_NO_CLIENT 17
 #define LOAD_SHAPING_MAX_RETRIES 3
 
@@ -159,6 +161,11 @@ struct wifi_data {
 	int servicing;
 	int disconnect_code;
 	int assoc_code;
+};
+
+struct disconnect_data {
+	struct wifi_data *wifi;
+	struct connman_network *network;
 };
 
 static GList *iface_list = NULL;
@@ -748,13 +755,14 @@ static void wifi_newlink(unsigned flags, unsigned change, void *user_data)
 	}
 
 	if ((wifi->flags & IFF_LOWER_UP) != (flags & IFF_LOWER_UP)) {
-		if (flags & IFF_LOWER_UP) {
+		if (flags & IFF_LOWER_UP)
 			DBG("carrier on");
-
-			handle_tethering(wifi);
-		} else
+		else
 			DBG("carrier off");
 	}
+
+	if (flags & IFF_LOWER_UP)
+		handle_tethering(wifi);
 
 	wifi->flags = flags;
 }
@@ -1520,6 +1528,8 @@ static void interface_create_callback(int result,
 							void *user_data)
 {
 	struct wifi_data *wifi = user_data;
+	char *bgscan_range_max;
+	long value;
 
 	DBG("result %d ifname %s, wifi %p", result,
 				g_supplicant_interface_get_ifname(interface),
@@ -1534,6 +1544,24 @@ static void interface_create_callback(int result,
 	if (g_supplicant_interface_get_ready(interface)) {
 		wifi->interface_ready = true;
 		finalize_interface_creation(wifi);
+	}
+
+	/*
+	 * Set the BSS expiration age to match the long scanning
+	 * interval to avoid the loss of unconnected networks between
+	 * two scans.
+	 */
+	bgscan_range_max = strrchr(BGSCAN_DEFAULT, ':');
+	if (!bgscan_range_max || strlen(bgscan_range_max) < 1)
+		return;
+
+	value = strtol(bgscan_range_max + 1, NULL, 10);
+	if (value <= 0 || errno == ERANGE)
+		return;
+
+	if (g_supplicant_interface_set_bss_expiration_age(interface,
+					value + SCAN_MAX_DURATION) < 0) {
+		connman_warn("Failed to set bss expiration age");
 	}
 }
 
@@ -2208,18 +2236,30 @@ static int network_connect(struct connman_network *network)
 static void disconnect_callback(int result, GSupplicantInterface *interface,
 								void *user_data)
 {
-	struct wifi_data *wifi = user_data;
+	struct disconnect_data *dd = user_data;
+	struct connman_network *network = dd->network;
+	struct wifi_data *wifi = dd->wifi;
 
-	DBG("result %d supplicant interface %p wifi %p",
-			result, interface, wifi);
+	g_free(dd);
+
+	DBG("result %d supplicant interface %p wifi %p networks: current %p "
+		"pending %p disconnected %p", result, interface, wifi,
+		wifi->network, wifi->pending_network, network);
 
 	if (result == -ECONNABORTED) {
 		DBG("wifi interface no longer available");
 		return;
 	}
 
-	if (wifi->network && wifi->network != wifi->pending_network)
-		connman_network_set_connected(wifi->network, false);
+	connman_network_set_connected(network, false);
+
+	if (network != wifi->network) {
+		if (network == wifi->pending_network)
+			wifi->pending_network = NULL;
+		DBG("current wifi network has changed since disconnection");
+		return;
+	}
+
 	wifi->network = NULL;
 
 	wifi->disconnecting = false;
@@ -2236,6 +2276,7 @@ static void disconnect_callback(int result, GSupplicantInterface *interface,
 static int network_disconnect(struct connman_network *network)
 {
 	struct connman_device *device = connman_network_get_device(network);
+	struct disconnect_data *dd;
 	struct wifi_data *wifi;
 	int err;
 
@@ -2252,10 +2293,16 @@ static int network_disconnect(struct connman_network *network)
 
 	wifi->disconnecting = true;
 
+	dd = g_malloc0(sizeof(*dd));
+	dd->wifi = wifi;
+	dd->network = network;
+
 	err = g_supplicant_interface_disconnect(wifi->interface,
-						disconnect_callback, wifi);
-	if (err < 0)
+						disconnect_callback, dd);
+	if (err < 0) {
 		wifi->disconnecting = false;
+		g_free(dd);
+	}
 
 	return err;
 }
@@ -2363,6 +2410,7 @@ static bool handle_wps_completion(GSupplicantInterface *interface,
 	if (wps) {
 		const unsigned char *ssid, *wps_ssid;
 		unsigned int ssid_len, wps_ssid_len;
+		struct disconnect_data *dd;
 		const char *wps_key;
 
 		/* Checking if we got associated with requested
@@ -2375,9 +2423,13 @@ static bool handle_wps_completion(GSupplicantInterface *interface,
 
 		if (!wps_ssid || wps_ssid_len != ssid_len ||
 				memcmp(ssid, wps_ssid, ssid_len) != 0) {
+			dd = g_malloc0(sizeof(*dd));
+			dd->wifi = wifi;
+			dd->network = network;
+
 			connman_network_set_associating(network, false);
 			g_supplicant_interface_disconnect(wifi->interface,
-						disconnect_callback, wifi);
+						disconnect_callback, dd);
 			return false;
 		}
 
@@ -2410,7 +2462,9 @@ static bool handle_4way_handshake_failure(GSupplicantInterface *interface,
 {
 	struct connman_service *service;
 
-	if (wifi->state != G_SUPPLICANT_STATE_4WAY_HANDSHAKE)
+	if ((wifi->state != G_SUPPLICANT_STATE_4WAY_HANDSHAKE) &&
+			!((wifi->state == G_SUPPLICANT_STATE_ASSOCIATING) &&
+				(wifi->assoc_code == ASSOC_STATUS_AUTH_TIMEOUT)))
 		return false;
 
 	if (wifi->connected)
@@ -2532,9 +2586,6 @@ static void interface_state(GSupplicantInterface *interface)
 
 		/* See table 8-36 Reason codes in IEEE Std 802.11 */
 		switch (wifi->disconnect_code) {
-		case 1: /* Unspecified reason */
-			/* Let's assume it's because we got blocked */
-
 		case 6: /* Class 2 frame received from nonauthenticated STA */
 			connman_network_set_error(network,
 						CONNMAN_NETWORK_ERROR_BLOCKED);

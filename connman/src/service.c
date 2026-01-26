@@ -972,8 +972,10 @@ static void service_apply(struct connman_service *service, GKeyFile *keyfile)
 	str = g_key_file_get_string(keyfile,
 				service->identifier, "Passphrase", NULL);
 	if (str) {
+		char *dec = g_strcompress(str);
+		g_free(str);
 		g_free(service->passphrase);
-		service->passphrase = str;
+		service->passphrase = dec;
 	}
 
 	if (service->ipconfig_ipv4)
@@ -1185,9 +1187,12 @@ static int service_save(struct connman_service *service)
 		g_free(str);
 	}
 
-	if (service->passphrase && strlen(service->passphrase) > 0)
+	if (service->passphrase && strlen(service->passphrase) > 0) {
+		char *enc = g_strescape(service->passphrase, NULL);
 		g_key_file_set_string(keyfile, service->identifier,
-				"Passphrase", service->passphrase);
+				"Passphrase", enc);
+		g_free(enc);
+	}
 
 	if (service->ipconfig_ipv4)
 		__connman_ipconfig_save(service->ipconfig_ipv4, keyfile,
@@ -2372,6 +2377,8 @@ bool connman_service_set_autoconnect(struct connman_service *service,
 	if (service->network)
 		connman_network_autoconnect_changed(service->network,
 							service->autoconnect);
+
+	connman_network_set_autoconnect(service->network, autoconnect);
 
 	return true;
 }
@@ -5230,9 +5237,7 @@ static DBusMessage *set_property(DBusConnection *conn,
 
 		service_save(service);
 		timeservers_configuration_changed(service);
-
-		if (service == connman_service_get_default())
-			__connman_timeserver_sync(service);
+		__connman_timeserver_conf_update(service);
 
 	} else if (g_str_equal(name, "Domains.Configuration")) {
 		DBusMessageIter entry;
@@ -10208,6 +10213,14 @@ bool __connman_service_create_from_network(struct connman_network *network)
 
 	service_register(service);
 	service_schedule_added(service);
+
+	/*
+	 * We have dropped favorite as requirement to autoconnect in
+	 * f64f1633bd76c63b445cbb2580b8fcf2e65e09e4 - keep it as such. Leave
+	 * the upstream change here just in case as a reminder.
+	 */
+	connman_network_set_autoconnect(network,
+				/*service->favorite && */service->autoconnect);
 
 	if (service->favorite || service->autoconnect) {
 		device = connman_network_get_device(service->network);

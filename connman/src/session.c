@@ -275,7 +275,6 @@ static int init_firewall_session(struct connman_session *session)
 	struct firewall_context *fw;
 	int err;
 	struct connman_ipconfig *ipconfig = NULL;
-	const char *addr = NULL;
 
 	if (session->policy_config->id_type == CONNMAN_SESSION_ID_TYPE_UNKNOWN &&
 			!session->info->config.source_ip_rule)
@@ -1801,7 +1800,7 @@ static void session_activate(struct connman_session *session)
 		struct connman_service *service;
 		struct connman_service_info *info;
 		GSList *service_list = NULL;
-		enum connman_service_state state = CONNMAN_SESSION_STATE_DISCONNECTED;
+		enum connman_service_state state = CONNMAN_SERVICE_STATE_DISCONNECT;
 
 		g_hash_table_iter_init(&iter, service_hash);
 
