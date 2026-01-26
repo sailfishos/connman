@@ -431,6 +431,336 @@ int __connman_provider_remove_by_path(const char *path)
 	return -ENXIO;
 }
 
+struct blocked_address {
+	char *src;
+	char *dst;
+	char *ifname;
+	bool *ifname_is_src;
+	uint16_t src_port;
+	uint16_t dst_port;
+	int family;
+	int fw_id;
+};
+
+static struct blocked_address *new_address(int family,
+					struct sockaddr_storage *src,
+					struct sockaddr_storage *dst,
+					const char *ifname, bool ifname_is_src)
+{
+	struct blocked_address *address;
+	char ipaddr_str[INET6_ADDRSTRLEN] = { 0 };
+
+	address = g_new0(struct blocked_address, 1);
+	address->family = family;
+	address->ifname = g_strdup(ifname);
+	address->ifname_is_src = ifname_is_src;
+
+	if (family == AF_INET) {
+		struct sockaddr_in *sin_src;
+		struct sockaddr_in *sin_dst;
+
+		if (src) {
+			sin_src = (struct sockaddr_in*)src;
+			if (!inet_ntop(AF_INET, &sin_src->sin_addr, ipaddr_str,
+							INET6_ADDRSTRLEN))
+				DBG("Cannot parse IPv4 in address");
+
+			address->src = g_strdup(ipaddr_str);
+			memset(ipaddr_str, 0, INET6_ADDRSTRLEN);
+			address->src_port = ntohs(sin_src->sin_port);
+		}
+
+		if (dst) {
+			sin_dst = (struct sockaddr_in*)ss_dst;
+			if (!inet_ntop(AF_INET, &sin_dst->sin_addr, ipaddr_dst,
+							INET6_ADDRSTRLEN))
+				DBG("Cannot parse IPv4 out address");
+
+			address->src = g_strdup(ipaddr_dst);
+			memset(ipaddr_str, 0, INET6_ADDRSTRLEN);
+			address->dst_port = ntohs(sin_dst->sin_port);
+		}
+
+	} else if (family == AF_INET6) {
+		struct sockaddr_in6 *sin6_src;
+		struct sockaddr_in6 *sin6_dst;
+
+		if (src) {
+			sin6_src = (struct sockaddr_in6*)ss_src;
+			if (!inet_ntop(AF_INET6, &sin6_src->sin6_addr, ipaddr_str,
+							INET6_ADDRSTRLEN))
+				DBG("Cannot parse IPv6 in address");
+
+			address->dst = g_strdup(ipaddr_dst);
+			memset(ipaddr_str, 0, INET6_ADDRSTRLEN);
+			port_src = ntohs(sin6_src->sin6_port);
+		}
+
+		if (dst) {
+			sin6_dst = (struct sockaddr_in6*)ss_dst;
+			if (!inet_ntop(AF_INET6, &sin6_dst->sin6_addr,
+							ipaddr_dst,
+							INET6_ADDRSTRLEN))
+				DBG("Cannot parse IPv6 out address");
+
+			address->dst = g_strdup(ipaddr_dst);
+			memset(ipaddr_str, 0, INET6_ADDRSTRLEN);
+			port_dst = ntohs(sin6_dst->sin6_port);
+		}
+	} else {
+		g_free(address);
+		return NULL;
+	}
+
+	return address;
+}
+
+
+
+/*
+struct nfct_cb_data {
+	struct nfct_handle *handle;
+	struct nf_conntrack *ct;
+	GList *addrs; // struct blocked_address
+	struct in_addr exclude_ipv4; // src
+	struct in6_addr exclude_ipv6; // src
+	struct firewall_context *firewall;
+	enum connman_ipconfig_type type;
+	char *ifname;
+	bool ifname_is_src;
+};*/
+
+static int set_exclude_addr(int family, struct connman_ipaddress *ipaddress,
+						struct nfct_cb_data *data)
+{
+	/* No ipaddress = valid case here -> bail out silently */
+	if (!ipaddress)
+		return 0;
+
+	if (!ipaddress->local) {
+		DBG("No local IP address set");
+		return -ENOENT;
+	}
+
+	switch (family) {
+	case AF_INET:
+		if (inet_pton(family, ipaddress->local, &data->exclude_ipv4)
+									!= 1)
+			return -EINVAL;
+
+		break;
+	case AF_INET6:
+		if (inet_pton(family, ipaddress->local, &data->exclude_ipv6)
+									!= 1)
+			return -EINVAL;
+
+		break;
+	default:
+		return -EAFNOSUPPORT;
+	}
+
+	return 0;
+}
+
+static int nfct_check_ip(enum nf_conntrack_msg_type type,
+						struct nf_conntrack *ct,
+						void *user_data)
+{
+	struct nfct_cb_data *cb_data = (struct nfct_cb_data*)user_data;
+
+	// TODO, if IP is not found = no result = remove from list
+	// TODO how to remove this from list, just traverse and drop it
+	// and make a call to firewall to remove with id?
+	// Don't remove, just remove from firewall and mark deleted -> id = -1
+}
+
+static int nfct_cb(enum nf_conntrack_msg_type type, struct nf_conntrack *ct,
+							void *user_data)
+{
+	struct nfct_cb_data *cb_data = (struct nfct_cb_data*)user_data;
+	struct blocked_address *address;
+	struct sockaddr_storage *ss_src = NULL;
+	struct sockaddr_storage *ss_dst = NULL;
+	struct sockaddr_in sa_src = {0};
+	struct sockaddr_in sa_dst = {0};
+	struct sockaddr_in6 sa6_src = {0};
+	struct sockaddr_in6 sa6_dst = {0};
+	const void* s6_addr_buf = {0};
+	int family;
+	int id;
+
+	print_connection(ct, cb_data->counter);
+
+	family = nfct_get_attr_u8(ct, ATTR_ORIG_L3PROTO);
+	switch (family) {
+	case AF_INET:
+		if (cb_data->type == CONNMAN_IPCONFIG_TYPE_IPV6)
+			return NFCT_CB_CONTINUE;
+
+		sa_src.sin_family = AF_INET;
+		sa_src.sin_addr.s_addr = nfct_get_attr_u32(ct, ATTR_IPV4_SRC);
+		sa_src.sin_port = nfct_get_attr_u16(ct, ATTR_PORT_SRC);
+
+		if (cb_data->exclude_ipv4.s_addr == sa_src.sin_addr.s_addr) {
+			DBG("excluded address detected");
+			return NFCT_CB_CONTINUE;
+		}
+
+		sa_dst.sin_family = AF_INET;
+		sa_dst.sin_addr.s_addr = nfct_get_attr_u32(ct, ATTR_IPV4_DST);
+		sa_dst.sin_port = nfct_get_attr_u16(ct, ATTR_PORT_DST);
+
+		ss_src = (struct sockaddr_storage *)&sa_src;
+		ss_dst = (struct sockaddr_storage *)&sa_dst;
+
+		break;
+	case AF_INET6:
+		if (cb_data->type == CONNMAN_IPCONFIG_TYPE_IPV4)
+			return NFCT_CB_CONTINUE;
+
+		sa6_src.sin6_family = AF_INET6;
+		s6_addr_buf = nfct_get_attr(ct, ATTR_IPV6_SRC);
+		memcpy(&sa6_src.sin6_addr.s6_addr, s6_addr_buf,
+						sizeof(struct in6_addr));
+		sa6_src.sin6_port = nfct_get_attr_u16(ct, ATTR_PORT_SRC);
+
+		if (!memcmp(cb_data->exclude_ipv6.s6_addr,
+						sa6_src.sin6_addr.s6_addr,
+						sizeof(struct in6_addr))) {
+			DBG("excluded IPv6 address detected");
+			return NFCT_CB_CONTINUE;
+		}
+
+		sa6_src.sin6_family = AF_INET6;
+		s6_addr_buf = nfct_get_attr(ct, ATTR_IPV6_DST);
+		memcpy(&sa6_dst.sin6_addr.s6_addr, s6_addr_buf,
+						sizeof(struct in6_addr));
+		sa6_dst.sin6_port = nfct_get_attr_u16(ct, ATTR_PORT_DST);
+
+		ss_src = (struct sockaddr_storage *)&sa6_src;
+		ss_dst = (struct sockaddr_storage *)&sa6_dst;
+
+		break;
+	default:
+		DBG("Unknown family for #%d", cb_data->counter);
+		return NFCT_CB_CONTINUE;
+	}
+
+	if (nfct_query(cb_data->handle, NFCT_Q_DESTROY, ct)) {
+		connman_error("Error deleting the connection: %s",
+							strerror(errno));
+		return NFCT_CB_CONTINUE;
+	}
+
+	DBG("Connection deleted");
+
+	address = new_address(family, ss_src, ss_dst, cb_data->ifname,
+						cb_data->ifname_is_src);
+
+	address->id = __connman_firewall_add_block_rule(cb_data->firewall,
+					address->family, address->src,
+					address->ifname_is_src ?
+							address->ifname : NULL,
+					address->dst,
+					address->ifname_is_src ?
+							NULL : address->ifname);
+	if (!address->id)
+		DBG("connection not blocked");
+
+	cb_data->addrs = g_list_append(cb_data->addrs, address);
+
+	return NFCT_CB_CONTINUE;
+}
+
+static void check_connection(gpointer data, gpointer user_data)
+{
+	struct blocked_address *address = (struct blocked_address*)user_data;
+
+	// TODO get addresses from blocked
+	err = __connman_inet_get_connections(type, NULL, NULL, NULL, NULL,
+							nfct_check_ip, data);
+	if (err)
+		connman_warn("cannot check connection");
+}
+
+static gboolean check_connections(gpointer user_data)
+{
+	struct nfct_cb_data *data = (struct nfct_cb_data *)user_data;
+	GList *iter;
+
+	if (!data->addrs || !g_list_length(data->addrs)) {
+		data->check_function_id = 0;
+		return G_SOURCE_REMOVE;
+	}
+
+	g_list_foreach(data->addrs, check_connection, data);
+	// TODO clean the list from items that have id == -1
+
+	return G_SOURCE_CONTINUE;
+}
+
+static int cleanup_old_connections(struct connman_provider *provider)
+{
+	struct nfct_cb_data *data;
+	struct connman_service *transport;
+	struct connman_ipconfig *ipv4config;
+	struct connman_ipconfig *ipv6config;
+	struct connman_ipaddress *ipv4;
+	struct connman_ipaddress *ipv6;
+	const char *transport_ident;
+	char *ifname;
+	int index;
+	int err;
+
+	transport_ident = __connman_provider_get_transport_ident(provider);
+	transport = connman_service_lookup_from_identifier(transport_ident);
+	index = __connman_service_get_index(transport);
+	ifname = connman_inet_ifname(index);
+
+	// TODO use host IP
+	ipv4config = __connman_service_get_ip4config(provider->service);
+	ipv6config = __connman_service_get_ip6config(provider->service);
+	ipv4 = connman_ipconfig_get_ipaddress(ipv4config);
+	ipv6 = connman_ipconfig_get_ipaddress(ipv6config);
+
+	data = g_try_malloc0(1, struct nfct_cb_data);
+	if (!data)
+		return -ENOMEM;
+
+	data->firewall = __connman_firewall_create();
+	if (!data->firewall) {
+		g_free(data);
+		return -ENOMEM;
+	}
+
+	data->type = CONNMAN_IPCONFIG_TYPE_ALL;
+	data->ifname = connman_inet_ifname(index);
+	data->ifname_is_src = true;
+
+	set_exclude_addr(AF_INET, ipv4, data);
+	set_exclude_addr(AF_INET6, ipv6, data);
+
+	err = __connman_inet_get_connections(type, NULL, NULL, NULL, NULL,
+								nfct_cb, data);
+	if (err)
+		connman_warn("cannot block connections");
+
+	cb_data->check_function_id = g_timeout_add_seconds(1, )
+
+	return err;
+	/*
+	 * 1. Initialize firewall
+	 * 2. Get connections from inet, use common struct. Give a callback
+	 *  here to process
+	 * 3. In callback add each to firewall, get back an id
+	 * 4. Call free for connections in inet
+	 * 5. setup a timeout function for removal, use 1s timeout and alloc struct
+	 * 6. in to-function, check each connection entry separately -> if found
+	 *    remove with fw_id from firewall
+	 * 7  if last, free struct
+	 */
+}
+
 static int set_connected(struct connman_provider *provider,
 					bool connected)
 {
@@ -481,9 +811,7 @@ static int set_connected(struct connman_provider *provider,
 
 		if (!ipconfig_ipv6 && !__connman_service_is_split_routing(
 							provider->vpn_service))
-			connman_inet_cleanup_existing_connections(
-						CONNMAN_IPCONFIG_TYPE_IPV6,
-						NULL, NULL);
+			cleanup_old_connections(provider);
 	} else {
 		if (ipconfig_ipv4) {
 			provider_indicate_state(provider,
@@ -929,8 +1257,7 @@ int connman_provider_set_split_routing(struct connman_provider *provider,
 
 	/* The VPN is used as default route with only IPv4 -> cut IPv6 */
 	if (!split_routing && type == CONNMAN_IPCONFIG_TYPE_IPV4)
-		connman_inet_cleanup_existing_connections(
-					CONNMAN_IPCONFIG_TYPE_IPV6, NULL, NULL);
+		cleanup_old_connections(provider);
 
 save:
 	__connman_service_set_split_routing(provider->vpn_service,
