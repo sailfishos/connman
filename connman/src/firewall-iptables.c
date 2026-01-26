@@ -862,105 +862,73 @@ int __connman_firewall_begin(struct firewall_context *ctx)
 }
 
 int __connman_firewall_add_block_rule(struct firewall_context *ctx, int family,
-					struct sockaddr_storage *ss_in,
-					const char *iface_in,
-					struct sockaddr_storage *ss_out,
-					const char *iface_out)
+					const char *src, const char *iface_src,
+					const char *dst, const char *iface_dst)
 {
 	char *rule;
-	char ipaddr_in[INET6_ADDRSTRLEN] = { 0 };
-	char ipaddr_out[INET6_ADDRSTRLEN] = { 0 };
-	uint16_t port_in = 0;
-	uint16_t port_out = 0;
-	int err;
+	char ipaddr_src[INET6_ADDRSTRLEN] = { 0 };
+	char ipaddr_dst[INET6_ADDRSTRLEN] = { 0 };
+	uint16_t port_src = 0;
+	uint16_t port_dst = 0;
+	int id;
 
 	if (!ctx)
 		return -EINVAL;
 
-	if (family == AF_INET) {
-		struct sockaddr_in *sin_in;
-		struct sockaddr_in *sin_out;
-
-		if (ss_in) {
-			sin_in = (struct sockaddr_in*)ss_in;
-			if (!inet_ntop(AF_INET, &sin_in->sin_addr, ipaddr_in,
-							INET6_ADDRSTRLEN))
-				DBG("Cannot parse IPv4 in address");
-
-			port_in = ntohs(sin_in->sin_port);
-		}
-
-		if (ss_out) {
-			sin_out = (struct sockaddr_in*)ss_out;
-			if (!inet_ntop(AF_INET, &sin_out->sin_addr, ipaddr_out,
-							INET6_ADDRSTRLEN))
-				DBG("Cannot parse IPv4 out address");
-
-			port_out = ntohs(sin_out->sin_port);
-		}
-
-	} else if (family == AF_INET6) {
-		struct sockaddr_in6 *sin6_in;
-		struct sockaddr_in6 *sin6_out;
-
-		if (ss_in) {
-			sin6_in = (struct sockaddr_in6*)ss_in;
-			if (!inet_ntop(AF_INET6, &sin6_in->sin6_addr, ipaddr_in,
-							INET6_ADDRSTRLEN))
-				DBG("Cannot parse IPv6 in address");
-
-			port_in = ntohs(sin6_in->sin6_port);
-		}
-
-		if (ss_out) {
-			sin6_out = (struct sockaddr_in6*)ss_out;
-			if (!inet_ntop(AF_INET6, &sin6_out->sin6_addr,
-							ipaddr_out,
-							INET6_ADDRSTRLEN))
-				DBG("Cannot parse IPv6 out address");
-
-			port_out = ntohs(sin6_out->sin6_port);
-		}
-	} else {
-		return -ENOTSUP;
-	}
-
-	if (iface_in && iface_out) {
+	if (iface_src && iface_dst) {
 		connman_warn("cannot use both in %s and out %s interfaces",
-							iface_in, iface_out);
+							iface_src, iface_dst);
 		return -ENOTSUP;
 	}
 
 	rule = g_strdup_printf("-s %s -sport %d -d %s -dport %d",
-				ipaddr_in, port_in, ipaddr_out, port_out);
-	if (iface_in) {
-		rule = g_strconcat(rule, " -i ", iface_in, NULL);
+				ipaddr_src, port_src, ipaddr_dst, port_dst);
+	if (iface_src) {
+		rule = g_strconcat(rule, " -i ", iface_src, NULL);
 	}
 
-	if (iface_out) {
-		rule = g_strconcat(rule, " -o ", iface_out, NULL);
+	if (iface_dst) {
+		rule = g_strconcat(rule, " -o ", iface_dst, NULL);
 	}
 
 	rule = g_strconcat(rule, "-j REJECT", NULL);
 
-	err = firewall_add_rule(ctx, __connman_iptables_append, NULL, family,
-				"filter", "OUTPUT", rule);
-	if (err)
-		connman_warn("cannot add firewall block rule \"%s\"", rule);
-	else
-		DBG("Rule added \"%s\"", rule);
+	id = firewall_add_rule(ctx, __connman_iptables_append, NULL, family,
+				"filter", iface_dst ? "OUTPUT" : "INPUT", rule);
+	if (id)
+		DBG("Rule %d added \"%s\"", id, rule);
 
 	g_free(rule);
 
-	return err;
+	return id;
 }
 
-int __connman_firewall_end(struct firewall_context *ctx)
+int __connman_firewall_remove_rule(struct firewall_context *ctx, int id)
+{
+	if (!ctx || !id)
+		return -EINVAL;
+
+	
+}
+
+int __connman_firewall_execute(struct firewall_context *ctx)
 {
 	if (!ctx)
 		return -EINVAL;
 
 	return firewall_enable_rules(ctx);
+}
+
+void __connman_firewall_end(struct firewall_context *ctx)
+{
+	int err;
+
+	if (!ctx)
+		return;
+
+	err = firewall_disable_rules(ctx);
+	if (!err)
+		firewall_remove_rules(ctx);
 }
 
 static void iterate_chains_cb(const char *chain_name, void *user_data)

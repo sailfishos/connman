@@ -275,6 +275,19 @@ int __connman_inet_del_ipv6_neigbour_proxy(int index, const char *ipv6_address,
 bool __connman_inet_isrootnfs_device(const char *devname);
 char **__connman_inet_get_pnp_nameservers(const char *pnp_file);
 
+int (*nfct_filter_cb)(enum nf_conntrack_msg_type type, struct nf_conntrack *ct,
+								void *data);
+struct nfct_cb_data {
+	GList *addrs; // struct blocked_address
+	struct in_addr exclude_ipv4; // src
+	struct in6_addr exclude_ipv6; // src
+	struct firewall_context *firewall;
+	enum connman_ipconfig_type type;
+	char *ifname;
+	bool ifname_is_src;
+	guint check_function_id;
+};
+
 #include <connman/resolver.h>
 
 int __connman_resolver_init(gboolean dnsproxy);
@@ -1244,7 +1257,8 @@ int __connman_firewall_add_block_rule(struct firewall_context *ctx, int family,
 					const char *iface_in,
 					struct sockaddr_storage *sa_out,
 					const char *iface_out);
-int __connman_firewall_end(struct firewall_context *ctx);
+int __connman_firewall_execute(struct firewall_context *ctx);
+void __connman_firewall_end(struct firewall_context *ctx);
 
 bool __connman_firewall_is_up(void);
 
