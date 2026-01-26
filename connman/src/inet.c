@@ -3826,6 +3826,8 @@ struct nfct_cb_data {
 	struct in_addr exclude_ipv4;
 	struct in6_addr exclude_ipv6;
 	struct firewall_context *firewall;
+	char *iface_in;
+	char *iface_out;
 	int counter;
 };
 
@@ -3968,7 +3970,8 @@ int delete_connection(enum nf_conntrack_msg_type type,
 	}
 
 	err = __connman_firewall_add_block_rule(cb_data->firewall, family,
-						ss_in, NULL, ss_out, NULL);
+						ss_in, cb_data->iface_in,
+						ss_out, cb_data->iface_out);
 	if (err)
 		DBG("connection not blocked");
 
@@ -4009,9 +4012,91 @@ int set_exclude_addr(int family, struct connman_ipaddress *ipaddress,
 	return 0;
 }
 
+int __connman_inet_get_connections(enum connman_ipconfig_type type,
+					in_addr *filter_src,
+					in_addr *filter_dst,
+					in6_addr filter6_src,
+					in6_addr filter6_dst,
+					nfct_filter_cb cb, void *cb_data)
+{
+	int err = 0;
+
+	ct = nfct_new();
+	if (!ct)
+		return -ENOMEM;
+
+	/* Open a connection tracking handle */
+	handle = nfct_open(CONNTRACK, 0);
+	if (!handle) {
+		connman_error("Error opening connection tracking handle");
+		nfct_destroy(ct);
+		return -ENOENT;
+	}
+
+	switch (type) {
+	case CONNMAN_IPCONFIG_TYPE_IPV4:
+		nfct_set_attr_u8(ct, ATTR_L3PROTO, AF_INET);
+		nfct_set_attr_u8(ct, ATTR_REPL_L3PROTO, AF_INET);
+		if (filter_src)
+			nfct_set_attr_u32(ct, ATTR_IPV4_DST, filter_src);
+		if (filter_dst)
+			nfct_set_attr_u32(ct, ATTR_IPV4_DST, filter_dst);
+		break;
+	case CONNMAN_IPCONFIG_TYPE_IPV6:
+		nfct_set_attr_u8(ct, ATTR_L3PROTO, AF_INET6);
+		nfct_set_attr_u8(ct, ATTR_REPL_L3PROTO, AF_INET6);
+		if (filter6_src)
+			nfct_set_attr_u32(ct, ATTR_IPV6_DST, filter6_src);
+		if (filter6_dst)
+			nfct_set_attr_u32(ct, ATTR_IPV6_DST, filter6_dst);
+		break;
+	case CONNMAN_IPCONFIG_TYPE_ALL:
+		nfct_set_attr_u8(ct, ATTR_L3PROTO, AF_INET);
+		nfct_set_attr_u8(ct, ATTR_REPL_L3PROTO, AF_INET);
+		if (filter_src)
+			nfct_set_attr_u32(ct, ATTR_IPV4_DST, filter_src);
+		if (filter_dst)
+			nfct_set_attr_u32(ct, ATTR_IPV4_DST, filter_dst);
+		nfct_set_attr_u8(ct, ATTR_L3PROTO, AF_INET6);
+		nfct_set_attr_u8(ct, ATTR_REPL_L3PROTO, AF_INET6);
+		if (filter6_src)
+			nfct_set_attr_u32(ct, ATTR_IPV6_DST, filter6_src);
+		if (filter6_dst)
+			nfct_set_attr_u32(ct, ATTR_IPV6_DST, filter6_dst);
+		break;
+	default:
+		err = -EINVAL;
+		goto out;
+	}
+
+	/* Register the filter */
+	if (nfct_callback_register(handle, NFCT_T_ALL, cb, &cb_data)) {
+		connman_error("Error registering netfilter callback");
+		err = -EINVAL;
+		goto out;
+	}
+
+	/* Dump the connection tracking table */
+	if (nfct_query(handle, NFCT_Q_DUMP_FILTER, ct)) {
+		connman_error("Error querying connection tracking table %s",
+							strerror(errno));
+		err = -ENODATA;
+		goto out;
+	}
+
+	DBG("Connections reset successfully.");
+
+out:
+	nfct_callback_unregister(handle);
+	nfct_close(handle);
+	nfct_destroy(ct);
+}
+
 int connman_inet_cleanup_existing_connections(enum connman_ipconfig_type type,
 					struct connman_ipaddress *ipaddress4,
-					struct connman_ipaddress *ipaddress6)
+					struct connman_ipaddress *ipaddress6,
+					const char *iface_in,
+					const char *iface_out)
 {
 	struct nfct_handle *handle;
 	struct nf_conntrack *ct;
@@ -4050,10 +4135,10 @@ int connman_inet_cleanup_existing_connections(enum connman_ipconfig_type type,
 		nfct_set_attr_u8(ct, ATTR_REPL_L3PROTO, AF_INET6);
 		break;
 	case CONNMAN_IPCONFIG_TYPE_ALL:
-		/* TODO: none set = all?
-		nfct_set_attr_u8(ct, ATTR_L3PROTO, AF_INET4);
+		nfct_set_attr_u8(ct, ATTR_L3PROTO, AF_INET);
+		nfct_set_attr_u8(ct, ATTR_REPL_L3PROTO, AF_INET);
 		nfct_set_attr_u8(ct, ATTR_L3PROTO, AF_INET6);
-		*/
+		nfct_set_attr_u8(ct, ATTR_REPL_L3PROTO, AF_INET6);
 		break;
 	default:
 		err = -EINVAL;
@@ -4067,6 +4152,9 @@ int connman_inet_cleanup_existing_connections(enum connman_ipconfig_type type,
 		err = -EINVAL;
 		goto out;
 	}
+
+	cb_data.iface_in = g_strdup(iface_in);
+	cb_data.iface_out = g_strdup(iface_out);
 
 	__connman_firewall_begin(cb_data.firewall);
 
@@ -4086,12 +4174,14 @@ int connman_inet_cleanup_existing_connections(enum connman_ipconfig_type type,
 		goto out;
 	}
 
-	__connman_firewall_end(cb_data.firewall);
+	__connman_firewall_execute(cb_data.firewall);
 
 	DBG("Connections reset successfully.");
 
 out:
 	__connman_firewall_destroy(cb_data.firewall);
+	g_free(cb_data.iface_in);
+	g_free(cb_data.iface_out);
 	nfct_callback_unregister(handle);
 	nfct_close(handle);
 	nfct_destroy(ct);
