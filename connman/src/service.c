@@ -269,6 +269,7 @@ static unsigned int autoconnect_id = 0;
 static unsigned int vpn_autoconnect_id = 0;
 static struct connman_service *current_default = NULL;
 static bool services_dirty = false;
+static bool enable_online_to_ready_transition = false;
 static bool autoconnect_paused = false;
 static guint load_wifi_services_id = 0;
 static GHashTable **service_type_hash;
@@ -554,6 +555,8 @@ static const char *reason2string(enum connman_service_connect_reason reason)
 		return "auto";
 	case CONNMAN_SERVICE_CONNECT_REASON_SESSION:
 		return "session";
+	case CONNMAN_SERVICE_CONNECT_REASON_NATIVE:
+		return "native";
 	}
 
 	return "unknown";
@@ -1995,6 +1998,8 @@ static void cancel_online_check(struct connman_service *service)
 static void start_online_check(struct connman_service *service,
 				enum connman_ipconfig_type type)
 {
+	enable_online_to_ready_transition =
+		connman_setting_get_bool("EnableOnlineToReadyTransition");
 	online_check_initial_interval =
 		connman_setting_get_uint("OnlineCheckInitialInterval");
 	online_check_max_interval =
@@ -4758,15 +4763,28 @@ static void do_auto_connect(struct connman_service *service,
 		return;
 
 	/*
+	 * Only user interaction should get VPN or WIFI connected in failure
+	 * state.
+	 */
+	if (service->state == CONNMAN_SERVICE_STATE_FAILURE &&
+				reason != CONNMAN_SERVICE_CONNECT_REASON_USER &&
+				(service->type == CONNMAN_SERVICE_TYPE_VPN ||
+				service->type == CONNMAN_SERVICE_TYPE_WIFI))
+		return;
+
+	/*
+	 * Do not use the builtin auto connect, instead rely on the
+	 * native auto connect feature of the service.
+	 */
+	if (service->connect_reason == CONNMAN_SERVICE_CONNECT_REASON_NATIVE)
+		return;
+
+	/*
 	 * Run service auto connect for other than VPN services. Afterwards
 	 * start also VPN auto connect process.
 	 */
 	if (service->type != CONNMAN_SERVICE_TYPE_VPN)
 		__connman_service_auto_connect(reason);
-	/* Only user interaction should get VPN connected in failure state. */
-	else if (service->state == CONNMAN_SERVICE_STATE_FAILURE &&
-				reason != CONNMAN_SERVICE_CONNECT_REASON_USER)
-		return;
 
 	vpn_auto_connect();
 }
@@ -5818,6 +5836,12 @@ static bool auto_connect_service(GList *services,
 		if (ignore[service->type] || busy[service->type])
 			continue;
 
+		if (service->connect_reason ==
+				CONNMAN_SERVICE_CONNECT_REASON_NATIVE) {
+			DBG("service %p uses native autonnect, skip", service);
+			continue;
+		}
+
 		if (service->pending ||
 				is_connecting(service->state) ||
 				is_connected(service->state)) {
@@ -6310,7 +6334,7 @@ static DBusMessage *connect_service(DBusConnection *conn,
 		struct connman_service *temp = list->data;
 
 		if (!is_connecting(temp->state) && !is_connected(temp->state))
-			break;
+			continue;
 
 		if (service == temp)
 			continue;
@@ -7822,6 +7846,7 @@ static void report_error_cb(void *user_context, bool retry,
 		__connman_service_clear_error(service);
 
 		service_complete(service);
+		service_list_sort();
 		__connman_connection_update_gateway();
 	}
 }
@@ -8115,6 +8140,15 @@ static int service_indicate_state(struct connman_service *service)
 		break;
 
 	case CONNMAN_SERVICE_STATE_IDLE:
+		if (old_state == CONNMAN_SERVICE_STATE_FAILURE &&
+				service->connect_reason ==
+					CONNMAN_SERVICE_CONNECT_REASON_NATIVE &&
+				service->error ==
+					CONNMAN_SERVICE_ERROR_INVALID_KEY) {
+			__connman_service_clear_error(service);
+			service_complete(service);
+		}
+
 		if (old_state != CONNMAN_SERVICE_STATE_DISCONNECT)
 			__connman_service_disconnect(service);
 		break;
@@ -8232,6 +8266,7 @@ static int service_indicate_state(struct connman_service *service)
 						report_error_cb,
 						get_dbus_sender(service),
 						NULL);
+			goto notifier;
 		}
 		service_complete(service);
 		break;
@@ -8241,6 +8276,7 @@ static int service_indicate_state(struct connman_service *service)
 
 	__connman_connection_update_gateway();
 
+notifier:
 	if ((old_state == CONNMAN_SERVICE_STATE_ONLINE &&
 			new_state != CONNMAN_SERVICE_STATE_READY) ||
 		(old_state == CONNMAN_SERVICE_STATE_READY &&
@@ -8484,12 +8520,14 @@ static gboolean downgrade_state_ipv6(gpointer user_data)
 	return false;
 }
 
-int __connman_service_online_check_failed(struct connman_service *service,
-					enum connman_ipconfig_type type)
+int __connman_service_online_check(struct connman_service *service,
+					enum connman_ipconfig_type type,
+					bool success)
 {
 	GSourceFunc downgrade_func;
 	GSourceFunc redo_func;
 	unsigned int *interval;
+	enum connman_service_state current_state;
 	guint timeout;
 
 	DBG("service %p type %s\n",
@@ -8505,6 +8543,22 @@ int __connman_service_online_check_failed(struct connman_service *service,
 		redo_func = redo_wispr_ipv6;
 	}
 
+	if(!enable_online_to_ready_transition)
+		goto redo_func;
+
+	if (success) {
+		*interval = online_check_max_interval;
+	} else {
+		current_state = service->state;
+		downgrade_state(service);
+		if (current_state != service->state)
+			*interval = online_check_initial_interval;
+		if (service != connman_service_get_default()) {
+			return 0;
+		}
+	}
+
+redo_func:
 	DBG("service %p type %s interval %d", service,
 		__connman_ipconfig_type2string(type), *interval);
 
@@ -8981,6 +9035,12 @@ int __connman_service_connect(struct connman_service *service,
 
 	__connman_service_clear_error(service);
 
+	if (service->network && service->autoconnect &&
+			__connman_network_native_autoconnect(service->network)) {
+		DBG("service %p switch connecting reason to native", service);
+		reason = CONNMAN_SERVICE_CONNECT_REASON_NATIVE;
+	}
+
 	err = service_connect(service);
 
 	DBG("service %p err %d", service, err);
@@ -9011,7 +9071,8 @@ int __connman_service_connect(struct connman_service *service,
 				service->provider)
 			connman_provider_disconnect(service->provider);
 
-	if (service->connect_reason == CONNMAN_SERVICE_CONNECT_REASON_USER) {
+	if (service->connect_reason == CONNMAN_SERVICE_CONNECT_REASON_USER ||
+			service->connect_reason == CONNMAN_SERVICE_CONNECT_REASON_NATIVE) {
 
 		/*
 		 * User-initiated connect would release the previously kept
@@ -9106,36 +9167,6 @@ int __connman_service_disconnect(struct connman_service *service)
 	__connman_ipconfig_disable(service->ipconfig_ipv6);
 
 	return err;
-}
-
-int __connman_service_disconnect_all(void)
-{
-	struct connman_service *service;
-	GSList *services = NULL, *list;
-	GList *iter;
-
-	DBG("");
-
-	for (iter = service_list; iter; iter = iter->next) {
-		service = iter->data;
-
-		if (!is_connected(service->state))
-			break;
-
-		services = g_slist_prepend(services, service);
-	}
-
-	for (list = services; list; list = list->next) {
-		struct connman_service *service = list->data;
-
-		service->ignore = true;
-
-		__connman_service_disconnect(service);
-	}
-
-	g_slist_free(services);
-
-	return 0;
 }
 
 /**
@@ -10109,6 +10140,54 @@ static void update_from_network(struct connman_service *service,
 	service_list_sort();
 }
 
+static void trigger_autoconnect(struct connman_service *service)
+{
+	struct connman_device *device;
+	bool native;
+
+	/*
+	 * We have dropped favorite as requirement to autoconnect in
+	 * f64f1633bd76c63b445cbb2580b8fcf2e65e09e4 - keep it as such.
+	 */
+	if (!service->favorite && !service->autoconnect)
+		return;
+
+	native = __connman_network_native_autoconnect(service->network);
+	if (native && service->autoconnect) {
+		DBG("trigger native autoconnect");
+		connman_network_set_autoconnect(service->network, true);
+		return;
+	}
+
+	device = connman_network_get_device(service->network);
+	if (device && connman_device_get_scanning(device, CONNMAN_SERVICE_TYPE_UNKNOWN))
+		return;
+
+	switch (service->type) {
+	case CONNMAN_SERVICE_TYPE_UNKNOWN:
+	case CONNMAN_SERVICE_TYPE_SYSTEM:
+	case CONNMAN_SERVICE_TYPE_P2P:
+		break;
+
+	case CONNMAN_SERVICE_TYPE_GADGET:
+	case CONNMAN_SERVICE_TYPE_ETHERNET:
+		if (service->autoconnect) {
+			__connman_service_connect(service,
+						CONNMAN_SERVICE_CONNECT_REASON_AUTO);
+			break;
+ 		}
+
+		/* fall through */
+	case CONNMAN_SERVICE_TYPE_BLUETOOTH:
+	case CONNMAN_SERVICE_TYPE_GPS:
+	case CONNMAN_SERVICE_TYPE_VPN:
+	case CONNMAN_SERVICE_TYPE_WIFI:
+	case CONNMAN_SERVICE_TYPE_CELLULAR:
+		do_auto_connect(service, CONNMAN_SERVICE_CONNECT_REASON_AUTO);
+		break;
+ 	}
+}
+
 /**
  * __connman_service_create_from_network:
  * @network: network structure
@@ -10118,7 +10197,6 @@ static void update_from_network(struct connman_service *service,
 bool __connman_service_create_from_network(struct connman_network *network)
 {
 	struct connman_service *service;
-	struct connman_device *device;
 	const char *ident, *group;
 	char *name;
 	unsigned int *auto_connect_types, *favorite_types;
@@ -10214,45 +10292,7 @@ bool __connman_service_create_from_network(struct connman_network *network)
 	service_register(service);
 	service_schedule_added(service);
 
-	/*
-	 * We have dropped favorite as requirement to autoconnect in
-	 * f64f1633bd76c63b445cbb2580b8fcf2e65e09e4 - keep it as such. Leave
-	 * the upstream change here just in case as a reminder.
-	 */
-	connman_network_set_autoconnect(network,
-				/*service->favorite && */service->autoconnect);
-
-	if (service->favorite || service->autoconnect) {
-		device = connman_network_get_device(service->network);
-		if (device && !connman_device_get_scanning(device,
-						CONNMAN_SERVICE_TYPE_UNKNOWN)) {
-
-			switch (service->type) {
-			case CONNMAN_SERVICE_TYPE_UNKNOWN:
-			case CONNMAN_SERVICE_TYPE_SYSTEM:
-			case CONNMAN_SERVICE_TYPE_P2P:
-				break;
-
-			case CONNMAN_SERVICE_TYPE_GADGET:
-			case CONNMAN_SERVICE_TYPE_ETHERNET:
-				if (service->autoconnect) {
-					__connman_service_connect(service,
-						CONNMAN_SERVICE_CONNECT_REASON_AUTO);
-					break;
-				}
-
-				/* fall through */
-			case CONNMAN_SERVICE_TYPE_BLUETOOTH:
-			case CONNMAN_SERVICE_TYPE_GPS:
-			case CONNMAN_SERVICE_TYPE_VPN:
-			case CONNMAN_SERVICE_TYPE_WIFI:
-			case CONNMAN_SERVICE_TYPE_CELLULAR:
-				do_auto_connect(service,
-					CONNMAN_SERVICE_CONNECT_REASON_AUTO);
-				break;
-			}
-		}
-	}
+	trigger_autoconnect(service);
 
 	__connman_notifier_service_add(service, service->name);
 
