@@ -495,9 +495,7 @@ static void portal_manage_status(GWebResult *result,
 	 * __connman_wispr_start which would reinitialize the wispr context
 	 * so we better free it beforehand to avoid deallocating it twice. */
 	service = connman_service_ref(wp_context->service);
-
-	if (!enable_online_to_ready_transition)		
-		wispr_portal_context_unref(wp_context);
+	wispr_portal_context_unref(wp_context);
 
 	__connman_service_ipconfig_indicate_state(service,
 					CONNMAN_SERVICE_STATE_ONLINE, type);
@@ -936,8 +934,8 @@ static bool wispr_portal_web_result(GWebResult *result, gpointer user_data)
 		break;
 	}
 
-	if (!skip_failed && __connman_service_online_check_failed(
-			wp_context->service, wp_context->type) == 0) {
+	if (!skip_failed && __connman_service_online_check(
+			wp_context->service, wp_context->type, true) == 0) {
 		wispr_portal_error(wp_context);
 		wispr_portal_context_unref(wp_context);
 		return false;
