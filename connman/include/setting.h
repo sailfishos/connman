@@ -60,6 +60,7 @@ extern "C" {
 #define CONF_ENABLE_6TO4                     "Enable6to4"
 #define CONF_VENDOR_CLASS_ID                 "VendorClassID"
 #define CONF_ENABLE_ONLINE_CHECK             "EnableOnlineCheck"
+#define CONF_ENABLE_ONLINE_TO_READY_TRANSITION "EnableOnlineToReadyTransition"
 #define CONF_AUTO_CONNECT_ROAMING_SERVICES   "AutoConnectRoamingServices"
 #define CONF_ACD                             "AddressConflictDetection"
 #define CONF_USE_GATEWAYS_AS_TIMESERVERS     "UseGatewaysAsTimeservers"
