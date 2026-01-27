@@ -109,6 +109,7 @@ static struct {
 	bool persistent_tethering_mode;
 	bool enable_6to4;
 	bool enable_online_check;
+	bool enable_online_to_ready_transition;
 	bool auto_connect_roaming_services;
 	bool acd;
 	bool use_gateways_as_timeservers;
@@ -161,6 +162,7 @@ enum option_val {
 	CONF_ENABLE_6TO4_VAL,
 	CONF_VENDOR_CLASS_ID_VAL,
 	CONF_ENABLE_ONLINE_CHECK_VAL,
+	CONF_ENABLE_ONLINE_TO_READY_TRANSITION_VAL,
 	CONF_AUTO_CONNECT_ROAMING_SERVICES_VAL,
 	CONF_ACD_VAL,
 	CONF_USE_GATEWAYS_AS_TIMESERVERS_VAL,
@@ -277,6 +279,9 @@ struct {
 					CONF_TYPE_CHAR},
 	{CONF_ENABLE_ONLINE_CHECK,
 					CONF_ENABLE_ONLINE_CHECK_VAL,
+					CONF_TYPE_BOOL},
+	{CONF_ENABLE_ONLINE_TO_READY_TRANSITION,
+					CONF_ENABLE_ONLINE_TO_READY_TRANSITION_VAL,
 					CONF_TYPE_BOOL},
 	{CONF_AUTO_CONNECT_ROAMING_SERVICES,
 					CONF_AUTO_CONNECT_ROAMING_SERVICES_VAL,
@@ -408,6 +413,9 @@ bool connman_setting_get_bool(const char *key)
 
 	if (g_str_equal(key, CONF_ENABLE_ONLINE_CHECK))
 		return connman_settings.enable_online_check;
+
+	if (g_str_equal(key, CONF_ENABLE_ONLINE_TO_READY_TRANSITION))
+		return connman_settings.enable_online_to_ready_transition;
 
 	if (g_str_equal(key, CONF_AUTO_CONNECT_ROAMING_SERVICES))
 		return connman_settings.auto_connect_roaming_services;
@@ -772,6 +780,8 @@ static void read_config_value(GKeyFile *config, const char *key, bool append)
 	case CONF_ENABLE_ONLINE_CHECK_VAL:
 		bool_ptr = &connman_settings.enable_online_check;
 		break;
+	case CONF_ENABLE_ONLINE_TO_READY_TRANSITION_VAL:
+		bool_ptr = &connman_settings.enable_online_to_ready_transition;
 	case CONF_AUTO_CONNECT_ROAMING_SERVICES_VAL:
 		bool_ptr = &connman_settings.auto_connect_roaming_services;
 		break;
