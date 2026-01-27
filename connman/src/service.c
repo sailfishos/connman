@@ -8520,7 +8520,7 @@ static gboolean downgrade_state_ipv6(gpointer user_data)
 	return false;
 }
 
-void __connman_service_online_check_failed(struct connman_service *service,
+int __connman_service_online_check(struct connman_service *service,
 					enum connman_ipconfig_type type,
 					bool success)
 {
@@ -8554,7 +8554,7 @@ void __connman_service_online_check_failed(struct connman_service *service,
 		if (current_state != service->state)
 			*interval = online_check_initial_interval;
 		if (service != connman_service_get_default()) {
-			return;
+			return 0;
 		}
 	}
 
@@ -8599,6 +8599,8 @@ redo_func:
 	 */
 	if (*interval < online_check_max_interval)
 		(*interval)++;
+
+	return -EAGAIN;
 }
 
 int __connman_service_ipconfig_indicate_state(struct connman_service *service,
