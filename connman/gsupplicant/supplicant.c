@@ -1252,7 +1252,7 @@ const char *g_supplicant_network_get_mode(GSupplicantNetwork *network)
 const char *g_supplicant_network_get_security(GSupplicantNetwork *network)
 {
 	if (!network)
-		return G_SUPPLICANT_SECURITY_UNKNOWN;
+		return G_SUPPLICANT_MODE_UNKNOWN;
 
 	return security2string(network->security);
 }
@@ -4814,6 +4814,26 @@ static void add_network_security_eap(DBusMessageIter *dict,
 		supplicant_dbus_dict_append_basic(dict, "anonymous_identity",
 						     DBUS_TYPE_STRING,
 						     &ssid->anonymous_identity);
+
+	if(ssid->subject_match)
+		supplicant_dbus_dict_append_basic(dict, "subject_match",
+						     DBUS_TYPE_STRING,
+						     &ssid->subject_match);
+
+	if(ssid->altsubject_match)
+		supplicant_dbus_dict_append_basic(dict, "altsubject_match",
+						     DBUS_TYPE_STRING,
+						     &ssid->altsubject_match);
+
+	if(ssid->domain_suffix_match)
+		supplicant_dbus_dict_append_basic(dict, "domain_suffix_match",
+						     DBUS_TYPE_STRING,
+						     &ssid->domain_suffix_match);
+
+	if(ssid->domain_match)
+		supplicant_dbus_dict_append_basic(dict, "domain_match",
+						     DBUS_TYPE_STRING,
+						     &ssid->domain_match);
 
 	g_free(eap_value);
 }
