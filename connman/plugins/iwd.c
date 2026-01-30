@@ -249,7 +249,7 @@ static void cm_network_connect_cb(DBusMessage *message, void *user_data)
 		if (!strcmp(dbus_error, "net.connman.iwd.Failed"))
 			connman_network_set_error(iwdn->network,
 					CONNMAN_NETWORK_ERROR_INVALID_KEY);
-		else
+		else if (!iwdn->autoconnect)
 			connman_network_set_error(iwdn->network,
 					CONNMAN_NETWORK_ERROR_CONNECT_FAIL);
 		return;
@@ -766,7 +766,7 @@ static void tech_disable_tethering_cb(const DBusError *error, void *user_data)
 
 	if (!g_dbus_proxy_method_call(iwdap->proxy, "Stop",
 					NULL, tech_ap_stop_cb, cbd, NULL)) {
-		connman_warn("iwd ap %s could not start AccessPoint mode: %s",
+		connman_warn("iwd ap %s could not stop AccessPoint mode: %s",
 			cbd->path, error->message);
 		goto out;
 	}
@@ -1653,6 +1653,30 @@ static void known_network_property_change(GDBusProxy *proxy, const char *name,
 	}
 }
 
+static void init_auto_connect(struct iwd_known_network *iwdkn)
+{
+	GHashTableIter iter;
+	gpointer key, value;
+
+	g_hash_table_iter_init(&iter, networks);
+
+	while (g_hash_table_iter_next(&iter, &key, &value)) {
+		struct iwd_network *iwdn = value;
+		struct iwd_known_network *kn;
+
+		if (!iwdn->known_network)
+			continue;
+
+		kn = g_hash_table_lookup(known_networks, iwdn->known_network);
+		if (iwdkn != kn)
+			continue;
+
+		iwdkn->autoconnect = iwdn->autoconnect;
+		update_auto_connect(iwdkn);
+		return;
+	}
+}
+
 static void create_know_network(GDBusProxy *proxy)
 {
 	const char *path = g_dbus_proxy_get_path(proxy);
@@ -1685,6 +1709,8 @@ static void create_know_network(GDBusProxy *proxy)
 	DBG("name '%s' type %s hidden %d, last_connection_time %s auto_connect %d",
 		iwdkn->name, iwdkn->type, iwdkn->hidden,
 		iwdkn->last_connected_time, iwdkn->auto_connect);
+
+	init_auto_connect(iwdkn);
 
 	g_dbus_proxy_set_property_watch(iwdkn->proxy,
 			known_network_property_change, NULL);

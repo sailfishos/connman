@@ -760,6 +760,7 @@ const char *__connman_network_get_type(struct connman_network *network);
 const char *__connman_network_get_group(struct connman_network *network);
 const char *__connman_network_get_ident(struct connman_network *network);
 bool __connman_network_get_weakness(struct connman_network *network);
+bool __connman_network_native_autoconnect(struct connman_network *network);
 
 int __connman_config_init();
 void __connman_config_cleanup(void);
@@ -891,8 +892,9 @@ int __connman_service_set_mdns(struct connman_service *service,
 
 void __connman_service_set_string(struct connman_service *service,
 					const char *key, const char *value);
-int __connman_service_online_check_failed(struct connman_service *service,
-					enum connman_ipconfig_type type);
+int __connman_service_online_check(struct connman_service *service,
+					enum connman_ipconfig_type type,
+					bool success);
 int __connman_service_ipconfig_indicate_state(struct connman_service *service,
 					enum connman_service_state new_state,
 					enum connman_ipconfig_type type);
@@ -908,7 +910,6 @@ int __connman_service_indicate_default(struct connman_service *service);
 int __connman_service_connect(struct connman_service *service,
 			enum connman_service_connect_reason reason);
 int __connman_service_disconnect(struct connman_service *service);
-int __connman_service_disconnect_all(void);
 void __connman_service_set_active_session(bool enable, GSList *list);
 void __connman_service_auto_connect(enum connman_service_connect_reason reason);
 void __connman_service_start_connect_timeout(struct connman_service *service,

@@ -1,6 +1,6 @@
 Name:       connman
 Summary:    Connection Manager
-Version:    1.39
+Version:    1.40
 Release:    1
 License:    GPLv2
 URL:        http://connman.net/
@@ -182,7 +182,7 @@ This package provides Wireguard VPN plugin for connman.
 %reconfigure --disable-static \
     --with-version=%{version} \
     --enable-ethernet=builtin \
-    --disable-wifi \
+    --enable-wifi \
     --enable-bluetooth=builtin \
     --enable-openconnect \
     --enable-openvpn \

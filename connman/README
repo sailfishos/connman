@@ -444,10 +444,12 @@ Information
 ===========
 
 Mailing list:
-	connman@connman.net
+	connman@lists.linux.dev
 
-For additional information about the project visit ConnMan web site:
-	https://01.org/connman
-	http://www.connman.net
+If you would like to subscribe to receive mail in your inbox, just
+send a (empty) message from your email account to
 
-You can report bugs at https://01.org/jira/browse/CM
+	connman+subscribe@lists.linux.dev
+
+Mailing list archive:
+	https://lore.kernel.org/connman
