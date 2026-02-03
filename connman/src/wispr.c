@@ -100,6 +100,8 @@ static GHashTable *wispr_portal_hash = NULL;
 #define wispr_portal_context_unref(wp_context) \
 	wispr_portal_context_unref_debug(wp_context, __FILE__, __LINE__, __func__)
 
+static bool enable_online_to_ready_transition = false;
+
 static void connman_wispr_message_init(struct connman_wispr_message *msg)
 {
 	msg->has_error = false;
@@ -498,6 +500,10 @@ static void portal_manage_status(GWebResult *result,
 	__connman_service_ipconfig_indicate_state(service,
 					CONNMAN_SERVICE_STATE_ONLINE, type);
 	connman_service_unref(service);
+
+	if (enable_online_to_ready_transition)
+		__connman_service_online_check(service, type, true);
+
 }
 
 static bool wispr_dns_route_request(int if_index, bool add, gpointer user_data)
@@ -875,7 +881,12 @@ static bool wispr_portal_web_result(GWebResult *result, gpointer user_data)
 		connman_agent_cancel(wp_context->service);
 		portal_manage_status(result, wp_context);
 		return false;
+	case 300:
+	case 301:
 	case 302:
+	case 303:
+	case 307:
+	case 308:
 		DBG("tls %d, Location header %d", (!g_web_supports_tls()),
 				(!g_web_result_get_header(result, "Location",
 						&redirect)));
@@ -906,7 +917,8 @@ static bool wispr_portal_web_result(GWebResult *result, gpointer user_data)
 		break;
 	case 400:
 	case 404:
-
+		__connman_service_online_check(wp_context->service,
+						wp_context->type, false);
 		break;
 	case 505:
 		DBG("HTTP version not supported, handling over to the browser");
@@ -922,8 +934,8 @@ static bool wispr_portal_web_result(GWebResult *result, gpointer user_data)
 		break;
 	}
 
-	if (!skip_failed && __connman_service_online_check_failed(
-			wp_context->service, wp_context->type) == 0) {
+	if (!skip_failed && __connman_service_online_check(
+			wp_context->service, wp_context->type, true) == 0) {
 		wispr_portal_error(wp_context);
 		wispr_portal_context_unref(wp_context);
 		return false;
@@ -1194,6 +1206,9 @@ int __connman_wispr_init(void)
 	wispr_portal_hash = g_hash_table_new_full(g_direct_hash,
 						g_direct_equal, NULL,
 						free_connman_wispr_portal);
+
+	enable_online_to_ready_transition =
+		connman_setting_get_bool("EnableOnlineToReadyTransition");
 
 	return 0;
 }

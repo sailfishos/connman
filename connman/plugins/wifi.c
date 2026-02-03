@@ -480,15 +480,23 @@ static GSupplicantP2PServiceParams *fill_in_peer_service_params(
 
 	if (version > 0) {
 		params->version = version;
-		params->service = g_memdup(spec, spec_length);
+		if (spec_length > 0) {
+			params->service = g_malloc(spec_length);
+			memcpy(params->service, spec, spec_length);
+		}
 	} else if (query_length > 0 && spec_length > 0) {
-		params->query = g_memdup(query, query_length);
+		params->query = g_malloc(query_length);
+		memcpy(params->query, query, query_length);
 		params->query_length = query_length;
 
-		params->response = g_memdup(spec, spec_length);
+		params->response = g_malloc(spec_length);
+		memcpy(params->response, spec, spec_length);
 		params->response_length = spec_length;
 	} else {
-		params->wfd_ies = g_memdup(spec, spec_length);
+		if (spec_length > 0) {
+			params->wfd_ies = g_malloc(spec_length);
+			memcpy(params->wfd_ies, spec, spec_length);
+		}
 		params->wfd_ies_length = spec_length;
 	}
 
@@ -1182,10 +1190,13 @@ static int get_hidden_connections_params(struct wifi_data *wifi,
 		scan_params->num_ssids = i;
 		scan_params->ssids = g_slist_reverse(scan_params->ssids);
 
-		scan_params->freqs = g_memdup(orig_params->freqs,
-				sizeof(uint16_t) * orig_params->num_freqs);
-		if (!scan_params->freqs)
+		if (orig_params->num_freqs <= 0)
 			goto err;
+
+		scan_params->freqs =
+			g_malloc(sizeof(uint16_t) * orig_params->num_freqs);
+		memcpy(scan_params->freqs, orig_params->freqs,
+			sizeof(uint16_t) *orig_params->num_freqs);
 
 		scan_params->num_freqs = orig_params->num_freqs;
 
@@ -2251,7 +2262,10 @@ static void disconnect_callback(int result, GSupplicantInterface *interface,
 		return;
 	}
 
-	connman_network_set_connected(network, false);
+	if (g_slist_find(wifi->networks, network))
+		connman_network_set_connected(network, false);
+
+	wifi->disconnecting = false;
 
 	if (network != wifi->network) {
 		if (network == wifi->pending_network)
@@ -2262,7 +2276,6 @@ static void disconnect_callback(int result, GSupplicantInterface *interface,
 
 	wifi->network = NULL;
 
-	wifi->disconnecting = false;
 	wifi->connected = false;
 
 	if (wifi->pending_network) {
