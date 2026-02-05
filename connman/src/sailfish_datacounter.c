@@ -27,6 +27,7 @@
 #include <limits.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <sys/stat.h>
 
 G_STATIC_ASSERT(DATACOUNTER_PROPERTY_COUNT < 32);
 G_STATIC_ASSERT(DATACOUNTER_PROPERTY_ANY == 0);
@@ -40,17 +41,18 @@ struct datacounter_timer_storage {
 	guint32 value;
 	guint32 unit;
 	guint8 at[8];
-} __attribute__((packed));
+};
 
 /* File version 1, 72 bytes */
 struct datacounter_file_contents_v1 {
 	guint32 version;
 	guint32 reserved;
 	struct connman_stats_data total;
-} __attribute__((packed));
+};
 
 /* File version 2, 208 bytes */
 #define COUNTER_FILE_VERSION (2)
+
 struct datacounter_file_contents {
 	/* datacounter_file_contents_v1 starts */
 	guint32 version;
@@ -65,7 +67,21 @@ struct datacounter_file_contents {
 	guint64 data_limit;
 	struct datacounter_timer_storage time_limit;
 	struct datacounter_timer_storage autoreset;
-} __attribute__((packed));
+};
+
+/* In connman.h */
+#define CONNMAN_STATS_SIZE (8 * sizeof(uint64_t))
+#define TIMER_STORAGE_SIZE (sizeof(guint32) * 2 + sizeof(guint8) * 8)
+
+#define COUNTER_FILE_VERSION_1_SIZE \
+    (sizeof(guint32) * 2 + CONNMAN_STATS_SIZE)
+
+#define COUNTER_FILE_VERSION_2_SIZE \
+    (COUNTER_FILE_VERSION_1_SIZE + \
+     CONNMAN_STATS_SIZE + \
+     sizeof(gint64) * 3 + \
+     sizeof(guint64) * 2 + \
+     TIMER_STORAGE_SIZE * 2)
 
 G_STATIC_ASSERT(TIME_UNITS == 6);
 
@@ -466,81 +482,258 @@ static char *datacounter_file_path(const char *ident, const char *suffix)
 			COUNTER_FILE_PREFIX, suffix, NULL);
 }
 
+static gsize pack_data(char *buf, gsize offset, const void *src, gsize len)
+{
+	memcpy(buf + offset, src, len);
+	return offset + len;
+}
+
+static gsize unpack_data(char *buf, gsize offset, void *dst, gsize len)
+{
+	memcpy(dst, buf + offset, len);
+	return offset + len;
+}
+
+static gsize pack_connman_stats_data(char *buf, gsize offset,
+				const struct connman_stats_data *data)
+{
+	offset = pack_data(buf, offset, &data->rx_packets,
+						sizeof(data->rx_packets));
+	offset = pack_data(buf, offset, &data->tx_packets,
+						sizeof(data->tx_packets));
+
+	offset = pack_data(buf, offset, &data->rx_bytes,
+						sizeof(data->rx_bytes));
+	offset = pack_data(buf, offset, &data->tx_bytes,
+						sizeof(data->tx_bytes));
+	offset = pack_data(buf, offset, &data->rx_errors,
+						sizeof(data->rx_errors));
+	offset = pack_data(buf, offset, &data->tx_errors,
+						sizeof(data->tx_errors));
+	offset = pack_data(buf, offset, &data->rx_dropped,
+						sizeof(data->rx_dropped));
+	offset = pack_data(buf, offset, &data->tx_dropped,
+						sizeof(data->tx_dropped));
+
+	return offset;
+}
+
+static gsize unpack_connman_stats_data(char *buf, gsize offset,
+				struct connman_stats_data *data)
+{
+	offset = unpack_data(buf, offset, &data->rx_packets, 
+						sizeof(data->rx_packets));
+	offset = unpack_data(buf, offset, &data->tx_packets, 
+						sizeof(data->tx_packets));
+	offset = unpack_data(buf, offset, &data->rx_bytes, 
+						sizeof(data->rx_bytes));
+	offset = unpack_data(buf, offset, &data->tx_bytes, 
+						sizeof(data->tx_bytes));
+	offset = unpack_data(buf, offset, &data->rx_errors, 
+						sizeof(data->rx_errors));
+	offset = unpack_data(buf, offset, &data->tx_errors, 
+						sizeof(data->tx_errors));
+	offset = unpack_data(buf, offset, &data->rx_dropped, 
+						sizeof(data->rx_dropped));
+	offset = unpack_data(buf, offset, &data->tx_dropped, 
+						sizeof(data->tx_dropped));
+
+	return offset;
+}
+
+static gsize pack_datacounter_timer_storage(char *buf, gsize offset,
+				const struct datacounter_timer_storage *data)
+{
+	offset = pack_data(buf, offset, &data->value, sizeof(data->value));
+	offset = pack_data(buf, offset, &data->unit, sizeof(data->unit));
+	offset = pack_data(buf, offset, data->at, sizeof(guint8) * 8);
+
+	return offset;
+}
+
+static gsize unpack_datacounter_timer_storage(char *buf, gsize offset,
+				struct datacounter_timer_storage *data)
+{
+	offset = unpack_data(buf, offset, &data->value, sizeof(data->value));
+	offset = unpack_data(buf, offset, &data->unit, sizeof(data->unit));
+	offset = unpack_data(buf, offset, data->at, sizeof(guint8) * 8);
+
+	return offset;
+}
+
 static gboolean datacounter_file_read(const char *path,
 				struct datacounter_file_contents *contents)
 {
-	gboolean ok = false;
-	int fd = open(path, O_RDONLY);
+	struct datacounter_file_contents data = { 0 };
+	char *buf = NULL;
+	gsize len;
+	gsize offset = 0;
+	GError *error = NULL;
 
-	if (fd >= 0) {
-		ssize_t nbytes;
-		struct datacounter_file_contents buf;
+	if (!path)
+		return false;
 
-		memset(&buf, 0, sizeof(buf));
-		nbytes = read(fd, &buf, sizeof(buf));
-		if (nbytes == sizeof(struct datacounter_file_contents_v1) &&
-						buf.version == 1) {
-			/* File saved by jolla-stats.c */
-			DBG("%s version 1", path);
-			buf.version = COUNTER_FILE_VERSION;
-			buf.flags = 0; /* Just in case, should already be 0 */
-			buf.baseline = buf.total;
-			buf.baseline_reset_time = datacounters_now();
-			nbytes = sizeof(buf);
-		}
-		if (nbytes == sizeof(buf)) {
-			if (buf.version == COUNTER_FILE_VERSION) {
-				DBG("%s", path);
-				DBG("[RX] %llu packets %llu bytes",
-					llu_(buf.total.rx_packets),
-					llu_(buf.total.rx_bytes));
-				DBG("[TX] %llu packets %llu bytes",
-					llu_(buf.total.tx_packets),
-					llu_(buf.total.tx_bytes));
-				*contents = buf;
-				ok = true;
-			} else {
-				connman_error("%s: unexpected version (%u)",
-					path, buf.version);
-			}
-		} else if (nbytes >= 0) {
-			connman_error("%s: failed to read (%u bytes)",
-				path, (unsigned int) nbytes);
-		} else {
-			connman_error("%s: %s", path, strerror(errno));
-		}
-		close(fd);
+	/*
+	 * Silently quit when file does not exist. All services are not
+	 * saved or they do not have the stats file.
+	 */
+	if (!g_file_test(path, G_FILE_TEST_EXISTS | G_FILE_TEST_IS_REGULAR))
+		return false;
+
+	if (!g_file_get_contents(path, &buf, &len, &error)) {
+		connman_error("Cannot read %s: %s", path, error->message);
+		g_clear_error(&error);
+		g_free(buf);
+		return false;
 	}
-	return ok;
+
+	g_clear_error(&error);
+
+	if (len != COUNTER_FILE_VERSION_1_SIZE &&
+					len != COUNTER_FILE_VERSION_2_SIZE) {
+		connman_error("Invalid datacounter file size %lu", len);
+		g_free(buf);
+		return false;
+	}
+
+	offset = unpack_data(buf, offset, &data.version, 
+							sizeof(data.version));
+
+	switch (data.version) {
+	case 1:
+		/* skip over reserved guint32 */
+		offset += sizeof(guint32);
+
+		offset = unpack_connman_stats_data(buf, offset, &data.total);
+
+		/* Convert to v2 */
+		data.version = COUNTER_FILE_VERSION;
+		data.flags = 0;
+		memcpy(&data.baseline, &data.total,
+					sizeof(struct connman_stats_data));
+		data.baseline_reset_time = datacounters_now();
+
+		break;
+	case 2:
+		offset = unpack_data(buf, offset, &data.flags,
+					sizeof(data.flags));
+
+		offset = unpack_connman_stats_data(buf, offset, &data.total);
+		offset = unpack_connman_stats_data(buf, offset,
+					&data.baseline);
+
+		offset = unpack_data(buf, offset, &data.reset_time, 
+					sizeof(data.reset_time));
+
+		offset = unpack_data(buf, offset, &data.baseline_reset_time,
+					sizeof(data.baseline_reset_time));
+
+		offset = unpack_data(buf, offset, &data.last_update_time,
+					sizeof(data.last_update_time));
+
+		offset = unpack_data(buf, offset, &data.data_warning,
+					sizeof(data.data_warning));
+
+		offset = unpack_data(buf, offset, &data.data_limit,
+					sizeof(data.data_limit));
+
+		offset = unpack_datacounter_timer_storage(buf, offset,
+					&data.time_limit);
+		offset = unpack_datacounter_timer_storage(buf, offset,
+					&data.autoreset);
+		break;
+	default:
+		connman_error("Invalid datacounter file version %u",
+					data.version);
+		return false;
+	}
+
+	memcpy(contents, &data, sizeof(struct datacounter_file_contents));
+
+	return true;
+}
+
+static int write_datacounter_file(const char *path, const char *buf,
+								gsize len)
+{
+	gssize byte_write;
+	int fd;
+	int err = 0;
+
+	if (!path || !buf || !*buf || !len)
+		return -EINVAL;
+
+	fd = open(path, O_RDWR | O_CREAT | O_TRUNC | O_NOFOLLOW,
+							STORAGE_FILE_MODE);
+	if (fd < 0)
+		return -errno;
+
+	while (len > 0) {
+		byte_write = write(fd, buf, len);
+		if (byte_write <= 0) {
+			connman_error("failed to write datacounter file %s",
+								path);
+			err = -EIO;
+			break;
+		}
+
+		len -= byte_write;
+		buf += byte_write;
+	}
+
+	close(fd);
+
+	if (len > 0) {
+		DBG("%lu bytes left on %s", len, path);
+		err = -EIO;
+	}
+
+	return err;
 }
 
 static gboolean datacounter_file_write(const char *path,
 			const struct datacounter_file_contents *contents)
 {
-	gboolean ok = false;
-	int fd = open(path, O_RDWR | O_CREAT, STORAGE_FILE_MODE);
+	char *buf;
+	gboolean ok = true;
+	gsize offset = 0;
+	int err;
 
-	if (fd >= 0) {
-		int err = ftruncate(fd, sizeof(*contents));
-		if (err >= 0) {
-			ssize_t nbytes = write(fd, contents, sizeof(*contents));
+	if (!path || !contents)
+		return -EINVAL;
 
-			if (nbytes == sizeof(*contents)) {
-				DBG("%s", path);
-				ok = true;
-			} else if (nbytes >= 0) {
-				DBG("%s: failed to write (%u bytes)",
-					path, (unsigned int) nbytes);
-			} else {
-				DBG("%s: %s", path, strerror(errno));
-			}
-		} else {
-			DBG("%s: %s", path, strerror(errno));
-		}
-		close(fd);
-	} else {
-		DBG("%s: %s", path, strerror(errno));
+	buf = g_malloc0(COUNTER_FILE_VERSION_2_SIZE + 1);
+
+	offset = pack_data(buf, offset, &contents->version, sizeof(contents->version));
+	offset = pack_data(buf, offset, &contents->flags, sizeof(contents->flags));
+
+	offset = pack_connman_stats_data(buf, offset, &contents->total);
+	offset = pack_connman_stats_data(buf, offset, &contents->baseline);
+
+	offset = pack_data(buf, offset, &contents->reset_time,
+					sizeof(contents->reset_time));
+	offset = pack_data(buf, offset, &contents->baseline_reset_time,
+					sizeof(contents->baseline_reset_time));
+	offset = pack_data(buf, offset, &contents->last_update_time,
+					sizeof(contents->last_update_time));
+	offset = pack_data(buf, offset, &contents->data_warning,
+					sizeof(contents->data_warning));
+	offset = pack_data(buf, offset, &contents->data_limit,
+					sizeof(contents->data_limit));
+
+	offset = pack_datacounter_timer_storage(buf, offset, 
+					&contents->time_limit);
+	offset = pack_datacounter_timer_storage(buf, offset, 
+					&contents->autoreset);
+
+	err = write_datacounter_file(path, buf, offset);
+	if (err) {
+		connman_error("Failed to write datacounter file %s", path);
+		ok = false;
 	}
+
+	g_free(buf);
+
 	return ok;
 }
 
