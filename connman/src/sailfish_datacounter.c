@@ -482,74 +482,81 @@ static char *datacounter_file_path(const char *ident, const char *suffix)
 			COUNTER_FILE_PREFIX, suffix, NULL);
 }
 
-static gsize pack_connman_stats_data(gsize offset, char *buf,
+static gsize pack_data(char *buf, gsize offset, const void *src, gsize len)
+{
+	memcpy(buf + offset, src, len);
+	return offset + len;
+}
+
+static gsize unpack_data(void *dst, char *buf, gsize offset, gsize len)
+{
+	memcpy(dst, buf + offset, len);
+	return offset + len;
+}
+
+static gsize pack_connman_stats_data(char *buf, gsize offset,
 				const struct connman_stats_data *data)
 {
-	memcpy(buf + offset, &data->rx_packets, sizeof(data->rx_packets));
-	offset += sizeof(data->rx_packets);
-	memcpy(buf + offset, &data->tx_packets, sizeof(data->tx_packets));
-	offset += sizeof(data->tx_packets);
-	memcpy(buf + offset, &data->rx_bytes, sizeof(data->rx_bytes));
-	offset += sizeof(data->rx_bytes);
-	memcpy(buf + offset, &data->tx_bytes, sizeof(data->tx_bytes));
-	offset += sizeof(data->tx_bytes);
-	memcpy(buf + offset, &data->rx_errors, sizeof(data->rx_errors));
-	offset += sizeof(data->rx_errors);
-	memcpy(buf + offset, &data->tx_errors, sizeof(data->tx_errors));
-	offset += sizeof(data->tx_errors);
-	memcpy(buf + offset, &data->rx_dropped, sizeof(data->rx_dropped));
-	offset += sizeof(data->rx_dropped);
-	memcpy(buf + offset, &data->tx_dropped, sizeof(data->tx_dropped));
-	offset += sizeof(data->tx_dropped);
+	offset = pack_data(buf, offset, &data->rx_packets,
+						sizeof(data->rx_packets));
+	offset = pack_data(buf, offset, &data->tx_packets,
+						sizeof(data->tx_packets));
+
+	offset = pack_data(buf, offset, &data->rx_bytes,
+						sizeof(data->rx_bytes));
+	offset = pack_data(buf, offset, &data->tx_bytes,
+						sizeof(data->tx_bytes));
+	offset = pack_data(buf, offset, &data->rx_errors,
+						sizeof(data->rx_errors));
+	offset = pack_data(buf, offset, &data->tx_errors,
+						sizeof(data->tx_errors));
+	offset = pack_data(buf, offset, &data->rx_dropped,
+						sizeof(data->rx_dropped));
+	offset = pack_data(buf, offset, &data->tx_dropped,
+						sizeof(data->tx_dropped));
 
 	return offset;
 }
 
-static gsize unpack_connman_stats_data(gsize offset, char *buf,
+static gsize unpack_connman_stats_data(char *buf, gsize offset,
 				struct connman_stats_data *data)
 {
-	memcpy(&data->rx_packets, buf + offset, sizeof(data->rx_packets));
-	offset += sizeof(data->rx_packets);
-	memcpy(&data->tx_packets, buf + offset, sizeof(data->tx_packets));
-	offset += sizeof(data->tx_packets);
-	memcpy(&data->rx_bytes, buf + offset, sizeof(data->rx_bytes));
-	offset += sizeof(data->rx_bytes);
-	memcpy(&data->tx_bytes, buf + offset, sizeof(data->tx_bytes));
-	offset += sizeof(data->tx_bytes);
-	memcpy(&data->rx_errors, buf + offset, sizeof(data->rx_errors));
-	offset += sizeof(data->rx_errors);
-	memcpy(&data->tx_errors, buf + offset, sizeof(data->tx_errors));
-	offset += sizeof(data->tx_errors);
-	memcpy(&data->rx_dropped, buf + offset, sizeof(data->rx_dropped));
-	offset += sizeof(data->rx_dropped);
-	memcpy(&data->tx_dropped, buf + offset, sizeof(data->tx_dropped));
-	offset += sizeof(data->tx_dropped);
+	offset = unpack_data(&data->rx_packets, buf, offset,
+						sizeof(data->rx_packets));
+	offset = unpack_data(&data->tx_packets, buf, offset,
+						sizeof(data->tx_packets));
+	offset = unpack_data(&data->rx_bytes, buf, offset,
+						sizeof(data->rx_bytes));
+	offset = unpack_data(&data->tx_bytes, buf, offset,
+						sizeof(data->tx_bytes));
+	offset = unpack_data(&data->rx_errors, buf, offset,
+						sizeof(data->rx_errors));
+	offset = unpack_data(&data->tx_errors, buf, offset,
+						sizeof(data->tx_errors));
+	offset = unpack_data(&data->rx_dropped, buf, offset,
+						sizeof(data->rx_dropped));
+	offset = unpack_data(&data->tx_dropped, buf, offset,
+						sizeof(data->tx_dropped));
 
 	return offset;
 }
 
-static gsize pack_datacounter_timer_storage(gsize offset, char *buf,
+static gsize pack_datacounter_timer_storage(char *buf, gsize offset,
 				const struct datacounter_timer_storage *data)
 {
-	memcpy(buf + offset, &data->value, sizeof(data->value));
-	offset += sizeof(data->value);
-	memcpy(buf + offset, &data->unit, sizeof(data->unit));
-	offset += sizeof(data->unit);
-	memcpy(buf + offset, data->at, sizeof(guint8) * 8);
-	offset += sizeof(guint8) * 8;
+	offset = pack_data(buf, offset, &data->value, sizeof(data->value));
+	offset = pack_data(buf, offset, &data->unit, sizeof(data->unit));
+	offset = pack_data(buf, offset, data->at, sizeof(guint8) * 8);
 
 	return offset;
 }
 
-static gsize unpack_datacounter_timer_storage(gsize offset, char *buf,
+static gsize unpack_datacounter_timer_storage(char *buf, gsize offset,
 				struct datacounter_timer_storage *data)
 {
-	memcpy(&data->value, buf + offset, sizeof(data->value));
-	offset += sizeof(data->value);
-	memcpy(&data->unit, buf + offset, sizeof(data->unit));
-	offset += sizeof(data->unit);
-	memcpy(data->at, buf + offset, sizeof(guint8) * 8);
-	offset += sizeof(guint8) * 8;
+	offset = unpack_data(&data->value, buf, offset, sizeof(data->value));
+	offset = unpack_data(&data->unit, buf, offset, sizeof(data->unit));
+	offset = unpack_data(data->at, buf, offset, sizeof(guint8) * 8);
 
 	return offset;
 }
@@ -584,20 +591,20 @@ static gboolean datacounter_file_read(const char *path,
 
 	if (len != COUNTER_FILE_VERSION_1_SIZE &&
 					len != COUNTER_FILE_VERSION_2_SIZE) {
-		connman_error("Invalid datacounter file size %lu", len);
+		connman_error("Invalid datacounter file size %u", len);
 		g_free(buf);
 		return false;
 	}
 
-	memcpy(&data.version, buf + offset, sizeof(data.version));
-	offset += sizeof(data.version);
+	offset = unpack_data(&data.version, buf, offset,
+							sizeof(data.version));
 
 	switch (data.version) {
 	case 1:
 		/* skip over reserved guint32 */
-		offset += sizeof(guint32);
+		offset = sizeof(guint32);
 
-		offset = unpack_connman_stats_data(offset, buf, &data.total);
+		offset = unpack_connman_stats_data(buf, offset, &data.total);
 
 		/* Convert to v2 */
 		data.version = COUNTER_FILE_VERSION;
@@ -607,36 +614,30 @@ static gboolean datacounter_file_read(const char *path,
 
 		break;
 	case 2:
-		memcpy(&data.flags, buf + offset, sizeof(data.flags));
-		offset += sizeof(data.flags);
+		offset = unpack_data(&data.flags, buf, offset, sizeof(data.flags));
 
-		offset = unpack_connman_stats_data(offset, buf, &data.total);
-		offset = unpack_connman_stats_data(offset, buf,
+		offset = unpack_connman_stats_data(buf, offset, &data.total);
+		offset = unpack_connman_stats_data(buf, offset,
 					&data.baseline);
 
-		memcpy(&data.reset_time, buf + offset,
+		offset = unpack_data(&data.reset_time, buf, offset,
 					sizeof(data.reset_time));
-		offset += sizeof(data.reset_time);
 
-		memcpy(&data.baseline_reset_time, buf + offset,
+		offset = unpack_data(&data.baseline_reset_time, buf, offset,
 					sizeof(data.baseline_reset_time));
-		offset += sizeof(data.baseline_reset_time);
 
-		memcpy(&data.last_update_time, buf + offset,
+		offset = unpack_data(&data.last_update_time, buf, offset,
 					sizeof(data.last_update_time));
-		offset += sizeof(data.last_update_time);
 
-		memcpy(&data.data_warning, buf + offset,
+		offset = unpack_data(&data.data_warning, buf, offset,
 					sizeof(data.data_warning));
-		offset += sizeof(data.data_warning);
 
-		memcpy(&data.data_limit, buf + offset,
+		offset = unpack_data(&data.data_limit, buf, offset,
 					sizeof(data.data_limit));
-		offset += sizeof(data.data_limit);
 
-		offset = unpack_datacounter_timer_storage(offset, buf,
+		offset = unpack_datacounter_timer_storage(buf, offset,
 					&data.time_limit);
-		offset = unpack_datacounter_timer_storage(offset, buf,
+		offset = unpack_datacounter_timer_storage(buf, offset,
 					&data.autoreset);
 		break;
 	default:
@@ -701,37 +702,26 @@ static gboolean datacounter_file_write(const char *path,
 
 	buf = g_malloc0(COUNTER_FILE_VERSION_2_SIZE + 1);
 
-	memcpy(buf + offset, &contents->version, sizeof(contents->version));
-	offset += sizeof(contents->version);
+	offset = pack_data(buf, offset, &contents->version, sizeof(contents->version));
+	offset = pack_data(buf, offset, &contents->flags, sizeof(contents->flags));
 
-	memcpy(buf + offset, &contents->flags, sizeof(contents->flags));
-	offset += sizeof(contents->flags);
+	offset = pack_connman_stats_data(buf, offset, &contents->total);
+	offset = pack_connman_stats_data(buf, offset, &contents->baseline);
 
-	offset = pack_connman_stats_data(offset, buf, &contents->total);
-	offset = pack_connman_stats_data(offset, buf, &contents->baseline);
-
-	memcpy(buf + offset, &contents->reset_time,
+	offset = pack_data(buf, offset, &contents->reset_time,
 					sizeof(contents->reset_time));
-	offset += sizeof(contents->reset_time);
-
-	memcpy(buf + offset, &contents->baseline_reset_time,
+	offset = pack_data(buf, offset, &contents->baseline_reset_time,
 					sizeof(contents->baseline_reset_time));
-	offset += sizeof(contents->baseline_reset_time);
-
-	memcpy(buf + offset, &contents->last_update_time,
+	offset = pack_data(buf, offset, &contents->last_update_time,
 					sizeof(contents->last_update_time));
-	offset += sizeof(contents->last_update_time);
-
-	memcpy(buf + offset, &contents->data_warning,
+	offset = pack_data(buf, offset, &contents->data_warning,
 					sizeof(contents->data_warning));
-	offset += sizeof(contents->data_warning);
-	memcpy(buf + offset, &contents->data_limit,
+	offset = pack_data(buf, offset, &contents->data_limit,
 					sizeof(contents->data_limit));
-	offset += sizeof(contents->data_limit);
 
-	offset = pack_datacounter_timer_storage(offset, buf,
+	offset = pack_datacounter_timer_storage(buf, offset, 
 					&contents->time_limit);
-	offset = pack_datacounter_timer_storage(offset, buf,
+	offset = pack_datacounter_timer_storage(buf, offset, 
 					&contents->autoreset);
 
 	err = write_datacounter_file(path, buf, offset);
