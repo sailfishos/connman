@@ -488,7 +488,7 @@ static gsize pack_data(char *buf, gsize offset, const void *src, gsize len)
 	return offset + len;
 }
 
-static gsize unpack_data(void *dst, char *buf, gsize offset, gsize len)
+static gsize unpack_data(char *buf, gsize offset, void *dst, gsize len)
 {
 	memcpy(dst, buf + offset, len);
 	return offset + len;
@@ -521,21 +521,21 @@ static gsize pack_connman_stats_data(char *buf, gsize offset,
 static gsize unpack_connman_stats_data(char *buf, gsize offset,
 				struct connman_stats_data *data)
 {
-	offset = unpack_data(&data->rx_packets, buf, offset,
+	offset = unpack_data(buf, offset, &data->rx_packets, 
 						sizeof(data->rx_packets));
-	offset = unpack_data(&data->tx_packets, buf, offset,
+	offset = unpack_data(buf, offset, &data->tx_packets, 
 						sizeof(data->tx_packets));
-	offset = unpack_data(&data->rx_bytes, buf, offset,
+	offset = unpack_data(buf, offset, &data->rx_bytes, 
 						sizeof(data->rx_bytes));
-	offset = unpack_data(&data->tx_bytes, buf, offset,
+	offset = unpack_data(buf, offset, &data->tx_bytes, 
 						sizeof(data->tx_bytes));
-	offset = unpack_data(&data->rx_errors, buf, offset,
+	offset = unpack_data(buf, offset, &data->rx_errors, 
 						sizeof(data->rx_errors));
-	offset = unpack_data(&data->tx_errors, buf, offset,
+	offset = unpack_data(buf, offset, &data->tx_errors, 
 						sizeof(data->tx_errors));
-	offset = unpack_data(&data->rx_dropped, buf, offset,
+	offset = unpack_data(buf, offset, &data->rx_dropped, 
 						sizeof(data->rx_dropped));
-	offset = unpack_data(&data->tx_dropped, buf, offset,
+	offset = unpack_data(buf, offset, &data->tx_dropped, 
 						sizeof(data->tx_dropped));
 
 	return offset;
@@ -554,9 +554,9 @@ static gsize pack_datacounter_timer_storage(char *buf, gsize offset,
 static gsize unpack_datacounter_timer_storage(char *buf, gsize offset,
 				struct datacounter_timer_storage *data)
 {
-	offset = unpack_data(&data->value, buf, offset, sizeof(data->value));
-	offset = unpack_data(&data->unit, buf, offset, sizeof(data->unit));
-	offset = unpack_data(data->at, buf, offset, sizeof(guint8) * 8);
+	offset = unpack_data(buf, offset, &data->value, sizeof(data->value));
+	offset = unpack_data(buf, offset, &data->unit, sizeof(data->unit));
+	offset = unpack_data(buf, offset, data->at, sizeof(guint8) * 8);
 
 	return offset;
 }
@@ -591,48 +591,50 @@ static gboolean datacounter_file_read(const char *path,
 
 	if (len != COUNTER_FILE_VERSION_1_SIZE &&
 					len != COUNTER_FILE_VERSION_2_SIZE) {
-		connman_error("Invalid datacounter file size %u", len);
+		connman_error("Invalid datacounter file size %lu", len);
 		g_free(buf);
 		return false;
 	}
 
-	offset = unpack_data(&data.version, buf, offset,
+	offset = unpack_data(buf, offset, &data.version, 
 							sizeof(data.version));
 
 	switch (data.version) {
 	case 1:
 		/* skip over reserved guint32 */
-		offset = sizeof(guint32);
+		offset += sizeof(guint32);
 
 		offset = unpack_connman_stats_data(buf, offset, &data.total);
 
 		/* Convert to v2 */
 		data.version = COUNTER_FILE_VERSION;
 		data.flags = 0;
-		data.baseline = data.total;
+		memcpy(&data.baseline, &data.total,
+					sizeof(struct connman_stats_data));
 		data.baseline_reset_time = datacounters_now();
 
 		break;
 	case 2:
-		offset = unpack_data(&data.flags, buf, offset, sizeof(data.flags));
+		offset = unpack_data(buf, offset, &data.flags,
+					sizeof(data.flags));
 
 		offset = unpack_connman_stats_data(buf, offset, &data.total);
 		offset = unpack_connman_stats_data(buf, offset,
 					&data.baseline);
 
-		offset = unpack_data(&data.reset_time, buf, offset,
+		offset = unpack_data(buf, offset, &data.reset_time, 
 					sizeof(data.reset_time));
 
-		offset = unpack_data(&data.baseline_reset_time, buf, offset,
+		offset = unpack_data(buf, offset, &data.baseline_reset_time,
 					sizeof(data.baseline_reset_time));
 
-		offset = unpack_data(&data.last_update_time, buf, offset,
+		offset = unpack_data(buf, offset, &data.last_update_time,
 					sizeof(data.last_update_time));
 
-		offset = unpack_data(&data.data_warning, buf, offset,
+		offset = unpack_data(buf, offset, &data.data_warning,
 					sizeof(data.data_warning));
 
-		offset = unpack_data(&data.data_limit, buf, offset,
+		offset = unpack_data(buf, offset, &data.data_limit,
 					sizeof(data.data_limit));
 
 		offset = unpack_datacounter_timer_storage(buf, offset,
@@ -681,8 +683,7 @@ static int write_datacounter_file(const char *path, const char *buf,
 	close(fd);
 
 	if (len > 0) {
-		connman_error("failed to write datacounter file %s",
-								path);
+		DBG("%lu bytes left on %s", len, path);
 		err = -EIO;
 	}
 
