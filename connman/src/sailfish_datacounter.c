@@ -663,7 +663,8 @@ static int write_datacounter_file(const char *path, const char *buf,
 	if (!path || !buf || !*buf || !len)
 		return -EINVAL;
 
-	fd = open(path, O_RDWR | O_CREAT | O_NOFOLLOW, STORAGE_FILE_MODE);
+	fd = open(path, O_RDWR | O_CREAT | O_TRUNC | O_NOFOLLOW,
+							STORAGE_FILE_MODE);
 	if (fd < 0)
 		return -errno;
 
