@@ -424,13 +424,18 @@ static const char *wifi_bss_enc_mode(GSupplicantBSS *bss)
 	case CONNMAN_SERVICE_SECURITY_SAE:
 	case CONNMAN_SERVICE_SECURITY_8021X:
 		pairwise = gsupplicant_bss_pairwise(bss);
-		if ((pairwise & GSUPPLICANT_CIPHER_CCMP) &&
-			(pairwise & GSUPPLICANT_CIPHER_TKIP)) {
+		if ((pairwise &
+			(GSUPPLICANT_CIPHER_CCMP|GSUPPLICANT_CIPHER_CCMP_256) &&
+			(pairwise & GSUPPLICANT_CIPHER_TKIP))) {
 			return "mixed";
-		} else if (pairwise & GSUPPLICANT_CIPHER_CCMP) {
+		} else if (pairwise &
+			(GSUPPLICANT_CIPHER_CCMP|GSUPPLICANT_CIPHER_CCMP_256)) {
 			return "aes";
 		} else if (pairwise & GSUPPLICANT_CIPHER_TKIP) {
 			return "tkip";
+		} else if (pairwise &
+			(GSUPPLICANT_CIPHER_GCMP|GSUPPLICANT_CIPHER_GCMP_256)) {
+			return "gcmp";
 		}
 	case CONNMAN_SERVICE_SECURITY_WEP:
 		return "wep";
