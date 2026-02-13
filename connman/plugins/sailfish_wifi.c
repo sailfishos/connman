@@ -393,7 +393,8 @@ static enum connman_service_security wifi_security(const char *security)
 	return CONNMAN_SERVICE_SECURITY_UNKNOWN;
 }
 
-static enum connman_service_security wifi_bss_security(GSupplicantBSS *bss)
+static enum connman_service_security wifi_bss_security(GSupplicantBSS *bss,
+	struct wifi_device *dev)
 {
 	switch (gsupplicant_bss_security(bss)) {
 	case GSUPPLICANT_SECURITY_NONE:
@@ -401,6 +402,17 @@ static enum connman_service_security wifi_bss_security(GSupplicantBSS *bss)
 	case GSUPPLICANT_SECURITY_WEP:
 		return CONNMAN_SERVICE_SECURITY_WEP;
 	case GSUPPLICANT_SECURITY_PSK:
+		if (dev && dev->tp) {
+			if (dev->tp->np.keymgmt & GSUPPLICANT_KEYMGMT_SAE) {
+				if (dev->tp->np.keymgmt & GSUPPLICANT_KEYMGMT_WPA_PSK)
+					return CONNMAN_SERVICE_SECURITY_PSK_SAE;
+				else
+					return CONNMAN_SERVICE_SECURITY_SAE;
+			}
+		} else {
+			connman_warn("cannot get WiFi security, dev %p dev->tp %p",
+							dev, dev ? dev->tp : NULL);
+		}
 		return CONNMAN_SERVICE_SECURITY_PSK;
 	case GSUPPLICANT_SECURITY_EAP:
 		return CONNMAN_SERVICE_SECURITY_8021X;
@@ -408,11 +420,12 @@ static enum connman_service_security wifi_bss_security(GSupplicantBSS *bss)
 	return CONNMAN_SERVICE_SECURITY_UNKNOWN;
 }
 
-static const char *wifi_bss_enc_mode(GSupplicantBSS *bss)
+static const char *wifi_bss_enc_mode(GSupplicantBSS *bss,
+													struct wifi_device *dev)
 {
 	GSUPPLICANT_CIPHER pairwise;
 
-	switch (wifi_bss_security(bss)) {
+	switch (wifi_bss_security(bss, dev)) {
 	case CONNMAN_SERVICE_SECURITY_PSK:
 	case CONNMAN_SERVICE_SECURITY_PSK_SAE:
 	case CONNMAN_SERVICE_SECURITY_SAE:
@@ -440,10 +453,11 @@ static const char *wifi_bss_enc_mode(GSupplicantBSS *bss)
 	}
 }
 
-static GString *wifi_bss_ident_append_suffix(GString *str, GSupplicantBSS *bss)
+static GString *wifi_bss_ident_append_suffix(GString *str, GSupplicantBSS *bss,
+														struct wifi_device *dev)
 {
 	const char *security =
-		__connman_service_security2string(wifi_bss_security(bss));
+		__connman_service_security2string(wifi_bss_security(bss, dev));
 
 	switch (bss->mode) {
 	case GSUPPLICANT_BSS_MODE_INFRA:
@@ -491,6 +505,7 @@ static char *wifi_bss_ident(struct wifi_bss *bss_data)
 	const guint8 *id_data;
 	GSupplicantBSS *bss = bss_data->bss;
 	const gboolean ssid_hidden = wifi_ssid_hidden(bss_data->ssid);
+	struct wifi_device *dev = NULL;
 
 	GASSERT(bss->valid && bss->present);
 	if (ssid_hidden) {
@@ -514,7 +529,10 @@ static char *wifi_bss_ident(struct wifi_bss *bss_data)
 
 	}
 
-	return g_string_free(wifi_bss_ident_append_suffix(str, bss), FALSE);
+	if (bss_data->net)
+		dev = bss_data->net->dev;
+
+	return g_string_free(wifi_bss_ident_append_suffix(str, bss, dev), FALSE);
 }
 
 static guint wifi_rssi_strength(int rssi)
@@ -1699,7 +1717,7 @@ static void wifi_network_update_strength(struct wifi_network *net)
 static void wifi_network_init(struct wifi_network *net, struct wifi_bss *data)
 {
 	GSupplicantBSS *bss = data->bss;
-	const char *enc_mode = wifi_bss_enc_mode(bss);
+	const char *enc_mode = wifi_bss_enc_mode(bss, net->dev);
 	const char *network_name = NULL;
 	char *tmp = NULL;
 	GBytes *ssid = NULL;
@@ -1744,7 +1762,7 @@ static void wifi_network_init(struct wifi_network *net, struct wifi_bss *data)
 								data, len);
 	}
 	connman_network_set_string(net->network, NETWORK_KEY_WIFI_SECURITY,
-		 __connman_service_security2string(wifi_bss_security(bss)));
+		 __connman_service_security2string(wifi_bss_security(bss, net->dev)));
 	if (gsupplicant_bss_security(bss) == GSUPPLICANT_SECURITY_EAP) {
 		/*
 		 * update_from_network() will replace the special default
@@ -3023,7 +3041,7 @@ static void wifi_device_bss_ident_changed(GSupplicantBSS *bss, void *data)
 	struct wifi_bss *bss_data = wifi_device_get_bss_data(dev, bss);
 
 	DBG("%s security %s ssid %s", bss->path,
-		__connman_service_security2string(wifi_bss_security(bss)),
+		__connman_service_security2string(wifi_bss_security(bss, dev)),
 		bss->ssid_str);
 
 	GASSERT(bss_data);
@@ -3053,7 +3071,7 @@ static void wifi_device_bss_add_3(struct wifi_device *dev,
 	struct wifi_network *net;
 	gboolean recovered = FALSE;
 	const gboolean continue_with_hidden_connect = (dev->hidden_connect &&
-		wifi_bss_security(bss) == dev->hidden_connect->security &&
+		wifi_bss_security(bss, dev) == dev->hidden_connect->security &&
 		wifi_bytes_equal(ssid, dev->hidden_connect->ssid));
 	struct wifi_bss *must_have = continue_with_hidden_connect ?
 		bss_data : NULL;
