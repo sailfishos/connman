@@ -4635,11 +4635,15 @@ static void wifi_supplicant_valid_changed(GSupplicant *wpa, void *plugin)
 static struct wifi_plugin *wifi_plugin_new(void)
 {
 	struct wifi_plugin *plugin = g_new0(struct wifi_plugin, 1);
+	unsigned int wpa3_support =	connman_setting_get_uint("WifiWPA3Support");
+
 	plugin->supplicant = gsupplicant_new();
 	plugin->supplicant_event_id[SUPPLICANT_EVENT_VALID] =
 		gsupplicant_add_handler(plugin->supplicant,
 			GSUPPLICANT_PROPERTY_VALID,
 			wifi_supplicant_valid_changed, plugin);
+	if (wpa3_support < GSUPPLICANT_WPA3_SUPPORT_NONE + 1)
+		gsupplicant_set_wpa3_support(plugin->supplicant, wpa3_support);
 	return plugin;
 }
 
