@@ -4632,14 +4632,34 @@ static void wifi_supplicant_valid_changed(GSupplicant *wpa, void *plugin)
 	wifi_plugin_update_running(plugin);
 }
 
+static GSUPPLICANT_WPA3_SUPPORT convert_wpa3_support(const char *str)
+{
+	if (!str || !g_strcmp0(str, "full"))
+		return GSUPPLICANT_WPA3_SUPPORT_FULL;
+	else if (!g_strcmp0(str, "mixed"))
+		return GSUPPLICANT_WPA3_SUPPORT_MIXED;
+	else if (!g_strcmp0(str, "none"))
+		return GSUPPLICANT_WPA3_SUPPORT_NONE;
+
+	return GSUPPLICANT_WPA3_SUPPORT_FULL;
+}
+
 static struct wifi_plugin *wifi_plugin_new(void)
 {
 	struct wifi_plugin *plugin = g_new0(struct wifi_plugin, 1);
+	const char *wpa3_support_str = connman_setting_get_string("WifiWPA3Support");
+	GSUPPLICANT_WPA3_SUPPORT wpa3_support = GSUPPLICANT_WPA3_SUPPORT_FULL;
+
 	plugin->supplicant = gsupplicant_new();
 	plugin->supplicant_event_id[SUPPLICANT_EVENT_VALID] =
 		gsupplicant_add_handler(plugin->supplicant,
 			GSUPPLICANT_PROPERTY_VALID,
 			wifi_supplicant_valid_changed, plugin);
+
+	wpa3_support = convert_wpa3_support(wpa3_support_str);
+	DBG("Set WPA3 support level to %d/%s", wpa3_support, wpa3_support_str);
+	gsupplicant_set_wpa3_support(plugin->supplicant, wpa3_support);
+
 	return plugin;
 }
 
