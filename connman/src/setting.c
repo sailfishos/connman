@@ -102,6 +102,7 @@ static struct {
 	unsigned int timeout_browserlaunch;
 	unsigned int online_check_initial_interval;
 	unsigned int online_check_max_interval;
+	unsigned int wifi_wpa3_support;
 	bool bg_scan;
 	bool allow_hostname_updates;
 	bool allow_domainname_updates;
@@ -173,7 +174,8 @@ enum option_val {
 	CONF_DEFAULT_MDNS_CONFIGURATION_VAL,
 	CONF_TETHERING_MDNS_CONFIGURATION_VAL,
 	CONF_ONLINE_CHECK_INITIAL_INTERVAL_VAL,
-	CONF_ONLINE_CHECK_MAX_INTERVAL_VAL
+	CONF_ONLINE_CHECK_MAX_INTERVAL_VAL,
+	CONF_WIFI_WPA3_SUPPORT_VAL
 };
 
 enum option_type {
@@ -316,6 +318,9 @@ struct {
 	{CONF_ONLINE_CHECK_MAX_INTERVAL,
 					CONF_ONLINE_CHECK_MAX_INTERVAL_VAL,
 					CONF_TYPE_INT},
+	{CONF_WIFI_WPA3_SUPPORT,
+					CONF_WIFI_WPA3_SUPPORT_VAL,
+					CONF_TYPE_INT},
 	{ 0 }
 };
 
@@ -451,6 +456,9 @@ unsigned int connman_setting_get_uint(const char *key)
 
 	if (g_str_equal(key, CONF_ONLINE_CHECK_MAX_INTERVAL))
 		return connman_settings.online_check_max_interval;
+
+	if (g_str_equal(key, CONF_WIFI_WPA3_SUPPORT))
+		return connman_settings.wifi_wpa3_support;
 
 	return 0;
 }
@@ -871,6 +879,9 @@ static void read_config_value(GKeyFile *config, const char *key, bool append)
 		break;
 	case CONF_ONLINE_CHECK_MAX_INTERVAL_VAL:
 		int_ptr = &connman_settings.online_check_max_interval;
+		break;
+	case CONF_WIFI_WPA3_SUPPORT_VAL:
+		int_ptr = &connman_settings.wifi_wpa3_support;
 		break;
 
 	/* int array */
