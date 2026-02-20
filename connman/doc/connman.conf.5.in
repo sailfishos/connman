@@ -254,6 +254,12 @@ servcies are not affected.
 .TP
 Default value is false.
 .TP
+.BI WifiWPA3Support= string
+The maximum level of WPA3 the device supports. Acceptable values are
+"full" = full WPA3 SAE support, "mixed" = WPA2+WPA3 Mixed is supported at maximum and "none" = No WPA3 support, WPA2 is supported at maximum.
+.TP
+Defaults to NULL, or with invalid string.
+.TP
 .SH "EXAMPLE"
 The following example configuration disables hostname updates and enables
 ethernet tethering.
