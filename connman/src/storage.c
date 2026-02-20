@@ -1172,6 +1172,68 @@ gchar **connman_storage_get_services(void)
 	return result;
 }
 
+static GKeyFile *storage_wpa2_to_wpa3_transition_check(const char *service_id)
+{
+	/* TODO: needs test fixing, do later
+	const char *psksae = __connman_service_security2string(
+										CONNMAN_SERVICE_SECURITY_PSK_SAE);
+	const char *sae = __connman_service_security2string(
+										CONNMAN_SERVICE_SECURITY_SAE);*/
+	char *search_id;
+
+	if (g_str_has_suffix(service_id, "_psksae") ||
+										g_str_has_suffix(service_id, "_sae")) {
+		GKeyFile *keyfile = NULL;
+		char *pos;
+		DBG("Search WiFi _psk settings for %s", service_id);
+
+		search_id = g_strdup(service_id);
+		pos = strrchr(search_id, '_');
+		if (!pos)
+			return NULL;
+
+		stpncpy(pos, "_psk", 5); // len+1 for \0
+
+		DBG("Search id %s", search_id);
+
+		keyfile = connman_storage_load_service(search_id);
+		if (keyfile) {
+			GKeyFile *clone = g_key_file_new();
+			gsize len;
+			gchar **keys = g_key_file_get_keys(keyfile, search_id, &len, NULL);
+			if (keys) {
+				int i;
+
+				DBG("Convert %s to %s", search_id, service_id);
+
+				for (i = 0; i < len; i++) {
+					g_key_file_set_string(clone, service_id, keys[i],
+							g_key_file_get_string(keyfile, search_id, keys[i],
+									NULL));
+				}
+			}
+
+			g_strfreev(keys);
+
+			if (__connman_storage_save_service(clone, service_id)) {
+				connman_warn("Cannot save cloned service %s, keeping old %s",
+														service_id, search_id);
+			} else {
+				DBG("Removing old service %s", search_id);
+				__connman_storage_remove_service(search_id);
+			}
+
+			return clone;
+		}
+		else
+			DBG("No old settings for %s", service_id);
+
+		g_free(search_id);
+	}
+
+	return NULL;
+}
+
 GKeyFile *connman_storage_load_service(const char *service_id)
 {
 	gchar *pathname;
@@ -1189,7 +1251,11 @@ GKeyFile *connman_storage_load_service(const char *service_id)
 	if (!pathname)
 		return NULL;
 
-	keyfile =  storage_load(pathname);
+	keyfile = storage_load(pathname);
+	if (!keyfile) {
+		keyfile = storage_wpa2_to_wpa3_transition_check(service_id);
+	}
+
 	g_free(pathname);
 
 	return keyfile;
