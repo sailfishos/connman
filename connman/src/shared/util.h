@@ -69,3 +69,6 @@ typedef int (*config_callback) (const char *filepath);
 int util_g_file_error_to_errno(GError *error);
 int util_read_config_files_from(const char *path, const char *suffix,
 					GList **conffiles, config_callback cb);
+
+int util_lock_file(int *lock_fd, const char *lock_path);
+bool util_unlock_file(int *lock_fd);

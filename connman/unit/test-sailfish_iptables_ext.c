@@ -416,6 +416,25 @@ DBusConnection *connman_dbus_get_connection(void)
 	return NULL;
 }
 
+char **connman_setting_get_string_list(const char *key)
+{
+	return NULL;
+}
+
+bool connman_setting_get_bool(const char *key)
+{
+	return false;
+}
+
+int util_lock_file(int *lock_fd, const char *lock_path)
+{
+	return 0;
+}
+
+bool util_unlock_file(int *lock_fd)
+{
+	return true;
+}
 
 /* End dummies */
 
