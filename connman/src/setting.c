@@ -94,6 +94,7 @@ static struct {
 	char *user_storage_dir;
 	char *vendor_class_id;
 	char *localtime;
+	char *wifi_wpa3_support;
 	unsigned int *auto_connect;
 	unsigned int *favorite_techs;
 	unsigned int *preferred_techs;
@@ -173,7 +174,8 @@ enum option_val {
 	CONF_DEFAULT_MDNS_CONFIGURATION_VAL,
 	CONF_TETHERING_MDNS_CONFIGURATION_VAL,
 	CONF_ONLINE_CHECK_INITIAL_INTERVAL_VAL,
-	CONF_ONLINE_CHECK_MAX_INTERVAL_VAL
+	CONF_ONLINE_CHECK_MAX_INTERVAL_VAL,
+	CONF_WIFI_WPA3_SUPPORT_VAL
 };
 
 enum option_type {
@@ -316,6 +318,9 @@ struct {
 	{CONF_ONLINE_CHECK_MAX_INTERVAL,
 					CONF_ONLINE_CHECK_MAX_INTERVAL_VAL,
 					CONF_TYPE_INT},
+	{CONF_WIFI_WPA3_SUPPORT,
+					CONF_WIFI_WPA3_SUPPORT_VAL,
+					CONF_TYPE_CHAR},
 	{ 0 }
 };
 
@@ -384,6 +389,9 @@ const char *connman_setting_get_string(const char *key)
 
 	if (g_str_equal(key, CONF_USER_STORAGE_DIR))
 		return connman_settings.user_storage_dir;
+
+	if (g_str_equal(key, CONF_WIFI_WPA3_SUPPORT))
+		return connman_settings.wifi_wpa3_support;
 
 	return NULL;
 }
@@ -653,6 +661,24 @@ static gboolean check_ip(const char *str)
 						(ntohl(ip.s_addr) & 0xff) == 0;
 }
 
+static gboolean check_wpa3_support(const char *str)
+{
+	const char *values[] = { "full", "mixed", "none", NULL};
+	int i;
+
+	if (!str)
+		return FALSE;
+
+	for (i = 0; values[i]; i++) {
+		if (g_str_equal(str, values[i]))
+			return TRUE;
+	}
+
+	connman_warn("invalid \"WifiWPA3Support\" config value \"%s\"", str);
+
+	return FALSE;
+}
+
 void append_noplugin(const char *value)
 {
 	__connman_setting_set_option(CONF_OPTION_NOPLUGIN, value);
@@ -831,6 +857,10 @@ static void read_config_value(GKeyFile *config, const char *key, bool append)
 		break;
 	case CONF_LOCALTIME_VAL:
 		str_ptr = &connman_settings.localtime;
+		break;
+	case CONF_WIFI_WPA3_SUPPORT_VAL:
+		str_ptr = &connman_settings.wifi_wpa3_support;
+		check_cb = check_wpa3_support;
 		break;
 
 	/* str list */
