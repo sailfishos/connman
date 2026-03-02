@@ -630,6 +630,10 @@ enum connman_service_security __connman_service_string2security(const char *str)
 		return CONNMAN_SERVICE_SECURITY_NONE;
 	if (!strcmp(str, "wep"))
 		return CONNMAN_SERVICE_SECURITY_WEP;
+	if (!strcmp(str,"psksae"))
+		return CONNMAN_SERVICE_SECURITY_PSK_SAE; // WPA2+WPA3
+	if (!strcmp(str,"sae"))
+		return CONNMAN_SERVICE_SECURITY_SAE;
 
 	return CONNMAN_SERVICE_SECURITY_UNKNOWN;
 }
@@ -649,6 +653,10 @@ const char *__connman_service_security2string(enum connman_service_security secu
 		return "psk";
 	case CONNMAN_SERVICE_SECURITY_8021X:
 		return "ieee8021x";
+	case CONNMAN_SERVICE_SECURITY_PSK_SAE:
+		return "psksae";
+	case CONNMAN_SERVICE_SECURITY_SAE:
+		return "sae";
 	}
 
 	return NULL;
@@ -2419,6 +2427,8 @@ static void append_security(DBusMessageIter *iter, void *user_data)
 		case CONNMAN_SERVICE_SECURITY_PSK:
 		case CONNMAN_SERVICE_SECURITY_WPA:
 		case CONNMAN_SERVICE_SECURITY_RSN:
+		case CONNMAN_SERVICE_SECURITY_PSK_SAE:
+		case CONNMAN_SERVICE_SECURITY_SAE:
 			str = "wps";
 			dbus_message_iter_append_basic(iter,
 						DBUS_TYPE_STRING, &str);
@@ -4271,6 +4281,8 @@ int __connman_service_check_passphrase(enum connman_service_security security,
 		return -EOPNOTSUPP;
 
 	case CONNMAN_SERVICE_SECURITY_PSK:
+	case CONNMAN_SERVICE_SECURITY_PSK_SAE:
+	case CONNMAN_SERVICE_SECURITY_SAE:
 		/* A raw key is always 64 bytes length,
 		 * its content is in hex representation.
 		 * A PSK key must be between [8..63].
@@ -8896,6 +8908,8 @@ static int service_connect(struct connman_service *service)
 		case CONNMAN_SERVICE_SECURITY_PSK:
 		case CONNMAN_SERVICE_SECURITY_WPA:
 		case CONNMAN_SERVICE_SECURITY_RSN:
+		case CONNMAN_SERVICE_SECURITY_PSK_SAE:
+		case CONNMAN_SERVICE_SECURITY_SAE:
 			if (service->error == CONNMAN_SERVICE_ERROR_INVALID_KEY)
 				return -ENOKEY;
 
@@ -8967,6 +8981,8 @@ static int service_connect(struct connman_service *service)
 		case CONNMAN_SERVICE_SECURITY_PSK:
 		case CONNMAN_SERVICE_SECURITY_WPA:
 		case CONNMAN_SERVICE_SECURITY_RSN:
+		case CONNMAN_SERVICE_SECURITY_PSK_SAE:
+		case CONNMAN_SERVICE_SECURITY_SAE:
 			break;
 		case CONNMAN_SERVICE_SECURITY_8021X:
 			prepare_8021x(service);
@@ -9955,6 +9971,10 @@ static enum connman_service_security convert_wifi_security(const char *security)
 		return CONNMAN_SERVICE_SECURITY_WPA;
 	else if (g_str_equal(security, "rsn"))
 		return CONNMAN_SERVICE_SECURITY_RSN;
+	else if (g_str_equal(security, "psksae"))
+		return CONNMAN_SERVICE_SECURITY_PSK_SAE;
+	else if (g_str_equal(security, "sae"))
+		return CONNMAN_SERVICE_SECURITY_SAE;
 	else
 		return CONNMAN_SERVICE_SECURITY_UNKNOWN;
 }
