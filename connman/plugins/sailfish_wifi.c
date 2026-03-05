@@ -3951,7 +3951,11 @@ static int wifi_device_tether_start(struct wifi_device *dev,
 			const char *ssid, const char *passphrase)
 {
 	int ret;
-	char *ifname = connman_inet_ifname(dev->ifi);
+	int ifi;
+	char *ifname;
+
+	ifi = connman_tethering_get_tethering_interface();
+	ifname = connman_inet_ifname(ifi < 0 ? dev->ifi : ifi);
 
 	if (ifname) {
 		/*
