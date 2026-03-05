@@ -35,6 +35,8 @@ void connman_tethering_client_register(const char *addr,
 						uint8_t version);
 void connman_tethering_client_unregister(const char *addr);
 GList *connman_tethering_get_clients(void);
+void connman_tethering_set_tethering_interface(const char *iface);
+int connman_tethering_get_tethering_interface(void);
 
 #ifdef __cplusplus
 }

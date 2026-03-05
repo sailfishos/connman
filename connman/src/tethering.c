@@ -64,6 +64,8 @@ static GHashTable *pn_hash;
 
 static GHashTable *clients_table;
 
+static int tethering_interface = -1;
+
 struct _clients_notify {
 	int id;
 	GHashTable *add;
@@ -818,6 +820,21 @@ void connman_tethering_client_unregister(const char *addr)
 GList *connman_tethering_get_clients(void)
 {
 	return g_hash_table_get_keys(clients_table);
+}
+
+void connman_tethering_set_tethering_interface(const char *iface)
+{
+	if (!iface)
+		return;
+
+	tethering_interface = connman_inet_ifindex(iface);
+
+	DBG("interface %d/%s", tethering_interface, iface);
+}
+
+int connman_tethering_get_tethering_interface(void)
+{
+	return tethering_interface;
 }
 
 int __connman_tethering_init(void)
