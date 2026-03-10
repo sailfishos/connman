@@ -1826,33 +1826,34 @@ static void wifi_network_delete(struct wifi_network *net)
 static struct wifi_device_tp *wifi_device_tp_new(char *ifname,
                                const char *ssid, const char *passphrase)
 {
-       struct wifi_device_tp *tp = g_slice_new0(struct wifi_device_tp);
+	struct wifi_device_tp *tp = g_slice_new0(struct wifi_device_tp);
 
-       /* Caller allocates ifname */
-       tp->ifname = ifname;
-       tp->np.passphrase = tp->passphrase = g_strdup(passphrase);
-       tp->np.mode = GSUPPLICANT_OP_MODE_AP;
-       tp->np.frequency = WIFI_AP_FREQUENCY;
-       tp->np.security = WIFI_AP_SECURITY;
-       tp->np.protocol = WIFI_AP_PROTOCOL;
-       tp->np.pairwise = WIFI_AP_CIPHER;
-       tp->np.group = WIFI_AP_CIPHER;
-       if (ssid) {
-               tp->np.ssid = g_bytes_new(ssid, strlen(ssid));
-       }
-       return tp;
+	/* Caller allocates ifname */
+	tp->ifname = ifname;
+	tp->np.passphrase = tp->passphrase = g_strdup(passphrase);
+	tp->np.mode = GSUPPLICANT_OP_MODE_AP;
+	tp->np.frequency = WIFI_AP_FREQUENCY;
+	tp->np.security = WIFI_AP_SECURITY;
+	tp->np.protocol = WIFI_AP_PROTOCOL;
+	tp->np.pairwise = WIFI_AP_CIPHER;
+	tp->np.group = WIFI_AP_CIPHER;
+
+	if (ssid)
+	       tp->np.ssid = g_bytes_new(ssid, strlen(ssid));
+
+	return tp;
 }
 
 static void wifi_device_tp_free(struct wifi_device_tp *tp)
 {
-       if (tp) {
-               if (tp->np.ssid) {
-                       g_bytes_unref(tp->np.ssid);
-               }
-               g_free(tp->passphrase);
-               g_free(tp->ifname);
-               g_slice_free(struct wifi_device_tp, tp);
-       }
+	if (tp) {
+		if (tp->np.ssid)
+			g_bytes_unref(tp->np.ssid);
+
+		g_free(tp->passphrase);
+		g_free(tp->ifname);
+		g_slice_free(struct wifi_device_tp, tp);
+	}
 }
 
 /*==========================================================================*
