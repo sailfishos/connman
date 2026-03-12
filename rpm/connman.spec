@@ -18,7 +18,7 @@ Requires:   iptables-ipv6 >= 1.6.1+git2
 Requires:   libgofono >= 2.0.0
 Requires:   libglibutil >= 1.0.21
 Requires:   libdbusaccess >= 1.0.2
-Requires:   libgsupplicant >= 1.0.17
+Requires:   libgsupplicant >= 1.0.28
 Requires:   glib2 >= 2.62
 Requires:   tayga >= 0.9.2
 Requires(preun): systemd
@@ -43,7 +43,7 @@ BuildRequires:  pkgconfig(libglibutil) >= 1.0.21
 BuildRequires:  pkgconfig(libdbuslogserver-dbus)
 BuildRequires:  pkgconfig(libdbusaccess) >= 1.0.3
 BuildRequires:  pkgconfig(libmce-glib)
-BuildRequires:  pkgconfig(libgsupplicant) >= 1.0.17
+BuildRequires:  pkgconfig(libgsupplicant) >= 1.0.28
 BuildRequires:  ppp-devel
 BuildRequires:  libtool
 BuildRequires:  usb-moded-devel >= 0.86.0+mer31
