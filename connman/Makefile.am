@@ -262,6 +262,8 @@ configdir = ${sysconfdir}/connman
 
 testconfigdir = "/tmp/connman_test"
 
+xtlockfile = $(runstatedir)/xtables.lock
+
 if MAINTAINER_MODE
 if VPN
 build_vpn_plugindir = $(abs_top_srcdir)/vpn/plugins/.libs
@@ -281,9 +283,9 @@ AM_CFLAGS = @DBUS_CFLAGS@ @GLIB_CFLAGS@ \
 				-DCONNMAN_PLUGIN_BUILTIN \
 				-DPLUGINDIR=\""$(build_plugindir)"\" \
 				-DSCRIPTDIR=\""$(build_scriptdir)"\" \
-				-DDEFAULT_STORAGE_ROOT=\""$(storageroot)\"" \
+				-DDEFAULT_STORAGE_ROOT=\""$(storageroot)"\" \
 				-DRUNSTATEDIR=\""$(runstatedir)"\" \
-				-DCONFIGDIR=\""$(configdir)\""
+				-DCONFIGDIR=\""$(configdir)"\"
 
 if SYSTEMD_RESOLVED_DNS_BACKEND
 AM_CFLAGS += -DSYSTEMD_RESOLVED_DNS_BACKEND -DDNS_BACKEND_V4=\""127.0.0.53"\"
@@ -347,8 +349,8 @@ endif
 endif
 
 if XTABLES
-AM_CFLAGS += @XTABLES_CFLAGS@
-src_connmand_CFLAGS += @XTABLES_CFLAGS@
+AM_CFLAGS += @XTABLES_CFLAGS@ -DXT_LOCK_NAME=\""$(xtlockfile)"\"
+src_connmand_CFLAGS += @XTABLES_CFLAGS@ -DXT_LOCK_NAME=\""$(xtlockfile)"\"
 endif
 
 if NFTABLES
@@ -687,9 +689,9 @@ tools_dbus_test_LDADD = gdbus/libgdbus-internal.la @GLIB_LIBS@ @DBUS_LIBS@
 
 tools_polkit_test_LDADD = @DBUS_LIBS@
 
-tools_iptables_test_CFLAGS = @DBUS_CFLAGS@
+tools_iptables_test_CFLAGS = @DBUS_CFLAGS@ -DXT_LOCK_NAME=\""$(xtlockfile)"\"
 
-tools_ip6tables_test_CFLAGS = @DBUS_CFLAGS@
+tools_ip6tables_test_CFLAGS = @DBUS_CFLAGS@ -DXT_LOCK_NAME=\""$(xtlockfile)"\"
 
 tools_private_network_test_LDADD = @GLIB_LIBS@ @DBUS_LIBS@
 
@@ -703,7 +705,7 @@ if XTABLES
 noinst_PROGRAMS += tools/iptables-test tools/iptables-unit
 
 tools_iptables_test_SOURCES = $(backtrace_sources) src/log.c src/iptables.c \
-				tools/iptables-test.c
+				tools/iptables-test.c src/shared/util.c
 tools_iptables_test_LDADD = @GLIB_LIBS@ @XTABLES_LIBS@ -ldl
 
 tools_iptables_unit_CFLAGS = @DBUS_CFLAGS@ @GLIB_CFLAGS@ @XTABLES_CFLAGS@ \
@@ -711,7 +713,8 @@ tools_iptables_unit_CFLAGS = @DBUS_CFLAGS@ @GLIB_CFLAGS@ @XTABLES_CFLAGS@ \
 		-DIPTABLES_SAVE=\""${IPTABLES_SAVE}"\" \
 		-DIP6TABLES_SAVE=\""${IP6TABLES_SAVE}"\" \
 		-DDEFAULT_STORAGE_ROOT=\""$(storageroot)"\" \
-		-DCONFIGDIR=\""$(testconfigdir)"\"
+		-DCONFIGDIR=\""$(testconfigdir)"\" \
+		-DXT_LOCK_NAME=\""$(xtlockfile)"\"
 tools_iptables_unit_SOURCES = $(backtrace_sources) src/log.c src/storage.c \
 		src/inotify.c src/iptables.c src/nat.c \
 		src/inet.c src/iptables-validate.c tools/iptables-unit.c \
@@ -720,7 +723,7 @@ tools_iptables_unit_LDADD = @GLIB_LIBS@ @DBUS_LIBS@ @XTABLES_LIBS@ @LIBIPTC_LIBS
 
 tools_ip6tables_test_SOURCES = $(backtrace_sources) src/log.c \
 		src/inotify.c src/iptables.c tools/ip6tables-test.c \
-		src/error.c src/dbus.c
+		src/error.c src/dbus.c src/shared/util.c
 tools_ip6tables_test_LDADD = gdbus/libgdbus-internal.la @GLIB_LIBS@ \
 		@XTABLES_LIBS@ @LIBIPTC_LIBS@ @DBUS_LIBS@ -ldl
 
