@@ -182,7 +182,7 @@ This package provides Wireguard VPN plugin for connman.
 %reconfigure --disable-static \
     --with-version=%{version} \
     --enable-ethernet=builtin \
-    --disable-wifi \
+    --enable-wifi \
     --enable-bluetooth=builtin \
     --enable-openconnect \
     --enable-openvpn \
