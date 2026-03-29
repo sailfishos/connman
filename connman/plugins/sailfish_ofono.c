@@ -117,6 +117,7 @@ struct modem_data {
 	gulong connctx_handler_id[CONNCTX_HANDLER_COUNT];
 	guint activate_timeout_id;
 	guint online_check_id;
+	GCancellable *pending_set_powered;
 	struct connman_device *device;
 	struct connman_network *network;
 	const char *country;
@@ -1060,6 +1061,25 @@ static void modem_online_check(struct modem_data *md)
 	modem_set_online(md, !__connman_technology_get_offlinemode());
 }
 
+static void set_powered_cb(OfonoModem* sender, const GError* error, void* arg)
+{
+	struct modem_data *md = arg;
+	DBG("set powered callback");
+
+	md->pending_set_powered = NULL;
+
+	if (error) {
+		connman_warn("Error setting modem powered %s: %s",
+			ofono_modem_path(md->modem), error->message);
+
+		// these are doomed to fail until the modem is powered
+		if (md->online_check_id) {
+			g_source_remove(md->online_check_id);
+			md->online_check_id = 0;
+		}
+	}
+}
+
 static void modem_changed(OfonoModem *modem, void *arg)
 {
 	struct modem_data *md = arg;
@@ -1068,7 +1088,12 @@ static void modem_changed(OfonoModem *modem, void *arg)
 					modem->powered, modem->online);
 		if (!modem->powered) {
 			DBG("%s powering up", ofono_modem_path(modem));
-			ofono_modem_set_powered(modem, TRUE);
+			if (md->pending_set_powered) {
+				g_cancellable_cancel(md->pending_set_powered);
+			}
+			md->pending_set_powered
+				= ofono_modem_set_powered_full(modem, TRUE,
+					&set_powered_cb, md);
 		}
 
 		/* Keep modem online state in sync with the offline mode */
@@ -1177,7 +1202,9 @@ static void modem_create(struct plugin_data *plugin, OfonoModem *modem)
 	g_hash_table_replace(plugin->modems, g_strdup(path), md);
 
 	if (ofono_modem_valid(modem)) {
-		ofono_modem_set_powered(modem, TRUE);
+		md->pending_set_powered
+			= ofono_modem_set_powered_full(modem, TRUE,
+				&set_powered_cb, md);
 		modem_online_check(md);
 	}
 	if (ofono_connmgr_valid(md->connmgr)) {
@@ -1195,6 +1222,10 @@ static void modem_delete(gpointer value)
 	connctx_activate_cancel(md);
 	if (md->online_check_id) {
 		g_source_remove(md->online_check_id);
+	}
+
+	if (md->pending_set_powered) {
+		g_cancellable_cancel(md->pending_set_powered);
 	}
 
 	if (md->delayed_set_connected_id) {
