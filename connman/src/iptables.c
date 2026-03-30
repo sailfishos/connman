@@ -1945,7 +1945,7 @@ static void dump_target(struct connman_iptables_entry *entry)
 	}
 
 	if (xt_t == xt_t->next)
-		free(xt_t);
+		g_free(xt_t);
 }
 
 static void dump_match(struct connman_iptables_entry *entry)
@@ -1999,7 +1999,7 @@ static void dump_match(struct connman_iptables_entry *entry)
 		return;
 	}
 	if (xt_m == xt_m->next)
-		free(xt_m);
+		g_free(xt_m);
 
 out:
 	DBG("\tmatch %s", match->u.user.name);
@@ -2581,6 +2581,38 @@ static struct option iptables_opts[] = {
 	{NULL},
 };
 
+#if XTABLES_VERSION_CODE > 11
+static struct option *iptables_option_alloc(struct option *orig)
+{
+	struct option *copy;
+	size_t count = 0;
+	size_t i;
+
+	if (!orig)
+		return NULL;
+
+	/* Count entries (including terminating zero entry) */
+	while (orig[count].name)
+		count++;
+
+	/* Include the terminating NULL entry */
+	count++;
+
+	copy = g_malloc0(count * sizeof(struct option));
+	if (!copy)
+		return NULL;
+
+	for (i = 0; i < count; i++) {
+		copy[i] = orig[i];
+		copy[i].name = orig[i].name;
+		copy[i].has_arg = orig[i].has_arg;
+		copy[i].val = orig[i].val;
+	}
+
+	return copy;
+}
+#endif
+
 void iptables_exit(enum xtables_exittype status, const char *msg, ...)
 			__attribute__((noreturn, format(printf,2,3)));
 
@@ -2856,7 +2888,7 @@ static struct xtables_match *prepare_matches(struct connman_iptables *table,
 			g_free(xt_m->m);
 
 			if (xt_m == xt_m->next)
-				free(xt_m);
+				g_free(xt_m);
 
 			xt_m = NULL;
 		}
@@ -2882,7 +2914,7 @@ static struct xtables_match *prepare_matches(struct connman_iptables *table,
 			g_free(xt_m->m);
 
 			if (xt_m == xt_m->next)
-				free(xt_m);
+				g_free(xt_m);
 
 			xt_m = NULL;
 		}
@@ -3572,7 +3604,11 @@ static void reset_xtables(void)
 	 */
 	if (xt_params->opts != xt_params->orig_opts) {
 		g_free(xt_params->opts);
+#if XTABLES_VERSION_CODE > 11
+		xt_params->opts = iptables_option_alloc(xt_params->orig_opts);
+#else
 		xt_params->opts = xt_params->orig_opts;
+#endif
 	}
 	xt_params->option_offset = 0;
 }
@@ -4071,12 +4107,22 @@ int __connman_iptables_init(void)
 	table_hash_ipv6 = g_hash_table_new_full(g_str_hash, g_str_equal,
 						NULL, remove_table);
 
+#if XTABLES_VERSION_CODE > 11
+	iptables_globals.opts = iptables_option_alloc(iptables_opts);
+	ip6tables_globals.opts = iptables_option_alloc(iptables_opts);
+#endif
+
 	return 0;
 }
 
 void __connman_iptables_cleanup(void)
 {
 	DBG("");
+
+#if XTABLES_VERSION_CODE > 11
+	g_free(iptables_globals.opts);
+	g_free(ip6tables_globals.opts);
+#endif
 
 	g_hash_table_destroy(table_hash);
 	g_hash_table_destroy(table_hash_ipv6);
