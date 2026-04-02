@@ -695,12 +695,21 @@ static gboolean datacounter_file_write(const char *path,
 			const struct datacounter_file_contents *contents)
 {
 	char *buf;
+	char *dir;
 	gboolean ok = true;
 	gsize offset = 0;
 	int err;
 
 	if (!path || !contents)
-		return -EINVAL;
+		return false;
+
+	/* Silently quit when the service is not saved = path does not exist. */
+	dir = g_path_get_dirname(path);
+	ok = g_file_test(dir, G_FILE_TEST_EXISTS | G_FILE_TEST_IS_DIR);
+	g_free(dir);
+
+	if (!ok)
+		return ok;
 
 	buf = g_malloc0(COUNTER_FILE_VERSION_2_SIZE + 1);
 
