@@ -280,8 +280,12 @@ struct option *xtables_options_xfrm(struct option *opt1, struct option *opt2,
 {
 	if (test_config_type & TEST_CONFIG_OPTIONS_XFRM_FAIL)
 		call_error("xtables_options_xfrm");
-
+#if XTABLES_VERSION_CODE > 11
+	g_free(opt2);
+	return g_malloc0(sizeof(opt1));
+#else
 	return opt1;
+#endif
 }
 
 struct option *xtables_merge_options(struct option *orig_opts,
@@ -291,7 +295,12 @@ struct option *xtables_merge_options(struct option *orig_opts,
 	if (test_config_type & TEST_CONFIG_MERGE_OPTIONS_FAIL)
 		call_error("xtables_merge_options");
 
+#if XTABLES_VERSION_CODE > 11
+	g_free(oldopts);
+	return g_malloc0(sizeof(orig_opts));
+#else
 	return orig_opts;
+#endif
 }
 
 /* End of xtables dummies */
