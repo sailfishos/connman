@@ -565,6 +565,47 @@ static struct connman_device test_device3 = {
 	.scanning = false,
 };
 
+static int test_device1_enable_err;
+static int test_device1_disable_err;
+static int test_device2_enable_err;
+static int test_device2_disable_err;
+
+static int *get_test_device_err_ptr(struct connman_device *device, bool enable)
+{
+	if (device == &test_device1)
+		return enable ? &test_device1_enable_err :
+				&test_device1_disable_err;
+
+	if (device == &test_device2)
+		return enable ? &test_device2_enable_err :
+				&test_device2_disable_err;
+
+	return NULL;
+}
+
+static void set_test_device_err(struct connman_device *device, bool enable,
+				int err)
+{
+	int *err_ptr = get_test_device_err_ptr(device, enable);
+
+	g_assert(err_ptr);
+	*err_ptr = err;
+}
+
+static int consume_test_device_err(struct connman_device *device, bool enable)
+{
+	int *err_ptr = get_test_device_err_ptr(device, enable);
+	int err = 0;
+
+	if (!err_ptr)
+		return 0;
+
+	err = *err_ptr;
+	*err_ptr = 0;
+
+	return err;
+}
+
 int __connman_device_request_scan(enum connman_service_type type)
 {
 	return 0;
@@ -626,10 +667,16 @@ bool connman_device_get_powered(struct connman_device *device)
 
 int __connman_device_enable(struct connman_device *device)
 {
+	int err;
+
 	DBG("device %p:%s", device, device->ident);
 
 	if (!device)
 		return -EINVAL;
+
+	err = consume_test_device_err(device, true);
+	if (err)
+		return err;
 
 	if (device->enabled)
 		return -EALREADY;
@@ -641,10 +688,16 @@ int __connman_device_enable(struct connman_device *device)
 
 int __connman_device_disable(struct connman_device *device)
 {
+	int err;
+
 	DBG("device %p:%s", device, device->ident);
 
 	if (!device)
 		return -EINVAL;
+
+	err = consume_test_device_err(device, false);
+	if (err)
+		return err;
 
 	if (!device->enabled)
 		return -EALREADY;
@@ -1354,9 +1407,11 @@ static void storage_test_global2()
 				"",
 				"[WiFi]",
 				"Enable=true",
+				"DisableInOfflineMode=false",
 				"",
 				"[Cellular]",
 				"Enable=false",
+				"DisableInOfflineMode=true",
 				"",
 				NULL,
 	};
@@ -1395,10 +1450,18 @@ static void storage_test_global2()
 
 	g_assert_true(g_key_file_has_key(keyfile, "WiFi", "Enable", NULL));
 	g_assert_true(g_key_file_get_boolean(keyfile, "WiFi", "Enable", NULL));
+	g_assert_true(g_key_file_has_key(keyfile, "WiFi",
+				"DisableInOfflineMode", NULL));
+	g_assert_false(g_key_file_get_boolean(keyfile, "WiFi",
+				"DisableInOfflineMode", NULL));
 
 	g_assert_true(g_key_file_has_key(keyfile, "Cellular", "Enable", NULL));
 	g_assert_false(g_key_file_get_boolean(keyfile, "Cellular", "Enable",
 				NULL));
+	g_assert_true(g_key_file_has_key(keyfile, "Cellular",
+				"DisableInOfflineMode", NULL));
+	g_assert_true(g_key_file_get_boolean(keyfile, "Cellular",
+				"DisableInOfflineMode", NULL));
 
 	/* Save and verify content */
 	g_assert_cmpint(__connman_storage_save_global(keyfile), ==, 0);
@@ -5587,10 +5650,12 @@ static void storage_test_technology_callbacks3()
 				"OfflineMode=true",
 				"",
 				"[WiFi]",
-				"Enable=false",
+				"Enable=true",
+				"DisableInOfflineMode=false",
 				"",
 				"[Cellular]",
 				"Enable=true",
+				"DisableInOfflineMode=true",
 				"",
 				NULL,
 	};
@@ -5677,7 +5742,7 @@ static void storage_test_technology_callbacks3()
 	/* user2 has offline mode enabled */
 	change_user_connmand_only(UID_USER2);
 	g_assert_false(test_device1.enabled);
-	g_assert_false(test_device2.enabled);
+	g_assert_true(test_device2.enabled);
 	g_assert_true(__connman_technology_get_offlinemode());
 
 	DBG("remove devices and drivers");
@@ -5690,7 +5755,7 @@ static void storage_test_technology_callbacks3()
 				-ENXIO);
 
 	set_technology_powered(CONNMAN_SERVICE_TYPE_WIFI, false,
-				"net.connman.Error.AlreadyDisabled");
+				NULL);
 	g_assert_cmpint(__connman_technology_remove_device(&test_device2), ==,
 				0);
 	connman_technology_driver_unregister(&test_device2_driver);
