@@ -78,6 +78,7 @@ struct connman_technology {
 	char *tethering_passphrase;
 
 	bool enable_persistent; /* Save the tech state */
+	bool disable_in_offlinemode; /* Save if offline mode powers it off */
 
 	GSList *driver_list;
 
@@ -178,6 +179,74 @@ static const char *get_name(enum connman_service_type type)
 	return NULL;
 }
 
+static bool technology_default_disable_in_offlinemode(
+		enum connman_service_type type)
+{
+	switch (type) {
+	/*
+	 * Technologies that do not transmit radio signals should
+	 * stay on by default.
+	 */
+	case CONNMAN_SERVICE_TYPE_ETHERNET:
+	case CONNMAN_SERVICE_TYPE_GPS:
+	case CONNMAN_SERVICE_TYPE_GADGET:
+		return false;
+	/*
+	 * These types are not offline-mode-managed technologies.
+	 */
+	case CONNMAN_SERVICE_TYPE_UNKNOWN:
+	case CONNMAN_SERVICE_TYPE_SYSTEM:
+	case CONNMAN_SERVICE_TYPE_VPN:
+		return false;
+	/*
+	 * All transmitting radio technologies are powered down by default.
+	 */
+	case CONNMAN_SERVICE_TYPE_WIFI:
+	case CONNMAN_SERVICE_TYPE_BLUETOOTH:
+	case CONNMAN_SERVICE_TYPE_CELLULAR:
+	case CONNMAN_SERVICE_TYPE_P2P:
+		return true;
+	}
+
+	return true;
+}
+
+static bool technology_disable_in_offlinemode(
+		struct connman_technology *technology)
+{
+	return technology && technology->disable_in_offlinemode;
+}
+
+static bool technology_persistent_powered(
+		struct connman_technology *technology, bool offlinemode)
+{
+	if (!technology)
+		return false;
+
+	return technology->enable_persistent &&
+		(!offlinemode || !technology_disable_in_offlinemode(technology));
+}
+
+static void technology_set_persistent_powered(
+		struct connman_technology *technology, bool powered)
+{
+	if (!technology)
+		return;
+
+	if (global_offlinemode) {
+		technology->disable_in_offlinemode = !powered;
+
+		/*
+		 * Enabling a technology in offline mode should also make it
+		 * stay enabled when returning to normal mode.
+		 */
+		if (powered)
+			technology->enable_persistent = true;
+	} else {
+		technology->enable_persistent = powered;
+	}
+}
+
 static void technology_save(struct connman_technology *technology)
 {
 	GKeyFile *keyfile;
@@ -199,6 +268,9 @@ static void technology_save(struct connman_technology *technology)
 
 	g_key_file_set_boolean(keyfile, identifier, "Enable",
 				technology->enable_persistent);
+
+	g_key_file_set_boolean(keyfile, identifier, "DisableInOfflineMode",
+				technology->disable_in_offlinemode);
 
 	g_key_file_set_boolean(keyfile, identifier, "Tethering",
 				technology->tethering_persistent);
@@ -487,6 +559,18 @@ static int technology_load_values(struct connman_technology *technology,
 	}
 
 	enable = g_key_file_get_boolean(keyfile, identifier,
+					"DisableInOfflineMode", &error);
+	if (!error) {
+		technology->disable_in_offlinemode = enable;
+	} else {
+		technology->disable_in_offlinemode =
+			technology_default_disable_in_offlinemode(
+						technology->type);
+		need_saving = true;
+		g_clear_error(&error);
+	}
+
+	enable = g_key_file_get_boolean(keyfile, identifier,
 					"Tethering", &error);
 	if (!error) {
 		technology->tethering_persistent = enable;
@@ -523,6 +607,9 @@ static void technology_load(struct connman_technology *technology)
 			technology->enable_persistent = true;
 		else
 			technology->enable_persistent = false;
+		technology->disable_in_offlinemode =
+			technology_default_disable_in_offlinemode(
+						technology->type);
 		return;
 	}
 
@@ -863,7 +950,9 @@ static int technology_enabled(struct connman_technology *technology)
 		struct connman_technology *p2p;
 
 		p2p = technology_find(CONNMAN_SERVICE_TYPE_P2P);
-		if (p2p && !p2p->enabled && p2p->enable_persistent)
+		if (p2p && !p2p->enabled &&
+				technology_persistent_powered(p2p,
+						global_offlinemode))
 			technology_enabled(p2p);
 	}
 
@@ -904,7 +993,7 @@ static int technology_enable(struct connman_technology *technology)
 	if (technology->pending_reply)
 		return -EBUSY;
 
-	if (connman_setting_get_bool("PersistentTetheringMode")	&&
+	if (connman_setting_get_bool("PersistentTetheringMode") &&
 					technology->tethering)
 		set_tethering(technology, true);
 
@@ -1028,8 +1117,7 @@ static gboolean enable_delayed(gpointer user_data)
 	switch (err) {
 	case -EBUSY:
 		/* Make sure the pending reply does not block and continue */
-		if (technology_send_pending_reply(technology, -ECANCELED) ==
-					-ECOMM)
+		if (technology_send_pending_reply(technology, -ECANCELED) == -ECOMM)
 			connman_warn("could not reply to pending request");
 
 		return G_SOURCE_CONTINUE;
@@ -1094,7 +1182,7 @@ static DBusMessage *set_powered(struct connman_technology *technology,
 		err = technology_disable(technology);
 
 	if (err != -EBUSY) {
-		technology->enable_persistent = powered;
+		technology_set_persistent_powered(technology, powered);
 		technology_save(technology);
 	} else if (powered && err == -EBUSY) {
 		technology_init_enable_delayed(technology);
@@ -1141,9 +1229,9 @@ static DBusMessage *set_property(DBusConnection *conn,
 	if (dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_VARIANT)
 		return __connman_error_invalid_arguments(msg);
 
-	if (__connman_access_tech_set_property(get_tech_access_policy(),
-		name, dbus_message_get_sender(msg), CONNMAN_ACCESS_ALLOW) !=
-						CONNMAN_ACCESS_ALLOW) {
+	if (__connman_access_tech_set_property(get_tech_access_policy(), name,
+					dbus_message_get_sender(msg), CONNMAN_ACCESS_ALLOW) !=
+			CONNMAN_ACCESS_ALLOW) {
 		DBG("%s is not allowed to set %s",
 				dbus_message_get_sender(msg), name);
 		return __connman_error_permission_denied(msg);
@@ -1518,7 +1606,8 @@ static struct connman_technology *technology_get(enum connman_service_type type)
 		struct connman_technology *wifi;
 		bool enable;
 
-		enable = technology->enable_persistent;
+		enable = technology_persistent_powered(technology,
+						global_offlinemode);
 
 		wifi = technology_find(CONNMAN_SERVICE_TYPE_WIFI);
 		if (enable && wifi)
@@ -1738,8 +1827,7 @@ int __connman_technology_add_device(struct connman_device *device)
 		goto done;
 	}
 
-	if (technology->enable_persistent &&
-					!global_offlinemode) {
+	if (technology_persistent_powered(technology, global_offlinemode)) {
 		int err = __connman_device_enable(device);
 		/*
 		 * connman_technology_add_device() calls __connman_device_enable()
@@ -1749,10 +1837,9 @@ int __connman_technology_add_device(struct connman_device *device)
 		 */
 		if (err == -EALREADY)
 			__connman_technology_enabled(type);
-	}
-	/* if technology persistent state is offline */
-	if (!technology->enable_persistent)
+	} else {
 		__connman_device_disable(device);
+	}
 
 done:
 	technology->device_list = g_slist_prepend(technology->device_list,
@@ -1831,10 +1918,23 @@ int __connman_technology_disabled(enum connman_service_type type)
 	return technology_disabled(technology);
 }
 
+static bool technology_offlinemode_result_ok(int err)
+{
+	switch (err) {
+	case 0:
+	case -EALREADY:
+	case -EINPROGRESS:
+	case -EOPNOTSUPP:
+		return true;
+	}
+
+	return false;
+}
+
 int __connman_technology_set_offlinemode(bool offlinemode)
 {
 	GSList *list;
-	int err = -EINVAL, enabled_tech_count = 0;
+	int fatal_err = 0;
 
 	if (global_offlinemode == offlinemode)
 		return 0;
@@ -1864,55 +1964,55 @@ int __connman_technology_set_offlinemode(bool offlinemode)
 	/* Traverse technology list, enable/disable each technology. */
 	for (list = technology_list; list; list = list->next) {
 		struct connman_technology *technology = list->data;
+		int err;
 
 		if (offlinemode) {
+			if (!technology_disable_in_offlinemode(technology))
+				continue;
+
 			err = technology_disable(technology);
+			if (technology_offlinemode_result_ok(err))
+				continue;
+
+			if (!fatal_err)
+				fatal_err = err;
 			continue;
 		}
 
 		if (technology->hardblocked)
 			continue;
 
-		if (!offlinemode && (technology->enable_persistent ||
-					technology->type ==
-					CONNMAN_SERVICE_TYPE_CELLULAR)) {
-			err = technology_enable(technology);
-			switch (err) {
-			case -EINPROGRESS:
-			case -EALREADY:
-			case 0:
-				enabled_tech_count++;
-				break;
-			case -EBUSY:
-				technology_init_enable_delayed(technology);
-				break;
-			default:
-				break;
-			}
+		if (!technology->enable_persistent &&
+				technology->type !=
+				CONNMAN_SERVICE_TYPE_CELLULAR)
+			continue;
+
+		err = technology_enable(technology);
+		if (err == -EBUSY) {
+			err = technology_init_enable_delayed(technology);
+			if (err == 0 || err == -EALREADY)
+				err = -EINPROGRESS;
 		}
+
+		if (technology_offlinemode_result_ok(err))
+			continue;
+
+		DBG("tech %p/%s failed to enable, result %s",
+				technology, get_name(technology->type),
+				strerror(-err));
 	}
 
-	switch (err) {
-	case -EINVAL:
-		if (enabled_tech_count > 0)
-			break;
-
-	case -EINPROGRESS:
-		/* fall through */
-	case -EALREADY:
-		/* fall through */
-	case 0:
+	if (!offlinemode || !fatal_err) {
 		connman_technology_save_offlinemode();
 		__connman_notifier_offlinemode(offlinemode);
-		break;
-	default:
+	} else {
 		global_offlinemode = connman_technology_load_offlinemode();
 	}
 
 	DBG("Clearing offlinemode override bitmask.");
 	global_offlinemode_override = 0;
 
-	return err;
+	return offlinemode ? fatal_err : 0;
 }
 
 void __connman_technology_set_connected(enum connman_service_type type,
@@ -2064,9 +2164,8 @@ bool __connman_technology_enable_from_config()
 
 		if (technology->rfkill_driven && technology->hardblocked) {
 			DBG("technology %p/%s hardblocked, not set as %s",
-						technology,
-						get_name(technology->type),
-						technology->enable_persistent ?
+					technology, get_name(technology->type),
+					technology_persistent_powered(technology, offlinemode) ?
 						"enabled" : "disabled");
 			technology_save(technology);
 			continue;
@@ -2077,39 +2176,7 @@ bool __connman_technology_enable_from_config()
 					technology->enable_persistent ?
 					"enabled" : "disabled");
 
-		if (!technology->enable_persistent) {
-			if (!technology->enabled) {
-				DBG("tech %p/%s already disabled", technology,
-						get_name(technology->type));
-				continue;
-			}
-
-			err = technology_disable(technology);
-			if (!err) {
-				if (technology_changed_state(technology,
-							false))
-					connman_warn("technology %p state"
-							"change not notified",
-							technology);
-			}
-
-			DBG("tech %p/%s enabled set as disabled, result %s",
-						technology,
-						get_name(technology->type),
-						err ? strerror(-err) : "ok");
-		} else {
-			/*
-			 * Don't enable in offline mode but set
-			 * enable_persistent to make sure tech is enabled
-			 * when leaving offline mode.
-			*/
-			if (offlinemode) {
-				DBG("tech %p/%s not enabled in offlinemode",
-						technology,
-						get_name(technology->type));
-				continue;
-			}
-
+		if (technology_persistent_powered(technology, offlinemode)) {
 			if (technology->enabled) {
 				DBG("tech %p/%s already enabled", technology,
 						get_name(technology->type));
@@ -2121,25 +2188,46 @@ bool __connman_technology_enable_from_config()
 			 * delayed to avoid inconsistent state.
 			 */
 			if (technology->rfkill_driven) {
-				err = technology_init_enable_delayed(
-							technology);
+				err = technology_init_enable_delayed(technology);
 			} else {
 				err = technology_enable(technology);
 				if (!err) {
-					if (technology_changed_state(
-							technology, true))
+					if (technology_changed_state(technology, true))
 						connman_warn("tech %p state"
 							"change notify fail",
 							technology);
 				} else if (err == -EBUSY) {
-					technology_init_enable_delayed(
-								technology);
+					technology_init_enable_delayed(technology);
 				}
 			}
 
 			DBG("tech %p/%s disabled set as enabled, result %s",
-						technology,
-						get_name(technology->type),
+						technology, get_name(technology->type),
+						err ? strerror(-err) : "ok");
+		} else {
+			if (!technology->enabled) {
+				if (offlinemode &&
+						technology->enable_persistent &&
+						technology_disable_in_offlinemode(technology)) {
+					DBG("tech %p/%s not enabled in offlinemode",
+							technology, get_name(technology->type));
+				} else if (!technology->enable_persistent) {
+					DBG("tech %p/%s already disabled",
+							technology, get_name(technology->type));
+				}
+
+				continue;
+			}
+
+			err = technology_disable(technology);
+			if (!err) {
+				if (technology_changed_state(technology, false))
+					connman_warn("technology %p state"
+							"change not notified", technology);
+			}
+
+			DBG("tech %p/%s enabled set as disabled, result %s",
+						technology, get_name(technology->type),
 						err ? strerror(-err) : "ok");
 		}
 
@@ -2155,9 +2243,9 @@ bool __connman_technology_enable_from_config()
 }
 
 static bool technology_apply_rfkill_change(struct connman_technology *technology,
-						bool softblock,
-						bool hardblock,
-						bool new_rfkill)
+											bool softblock,
+											bool hardblock,
+											bool new_rfkill)
 {
 	bool hardblock_changed = false;
 	bool apply = true;
@@ -2201,12 +2289,10 @@ softblock_change:
 
 	technology->softblocked = softblock;
 
-	if (technology->hardblocked ||
-					technology->softblocked) {
+	if (technology->hardblocked || technology->softblocked) {
 		if (technology_disabled(technology) != -EALREADY)
 			technology_affect_devices(technology, false);
-	} else if (!technology->hardblocked &&
-					!technology->softblocked) {
+	} else if (!technology->hardblocked && !technology->softblocked) {
 		if (technology_enabled(technology) != -EALREADY)
 			technology_affect_devices(technology, true);
 	}
@@ -2219,7 +2305,8 @@ softblock_change:
 			DBG("%s is switched on.", get_name(technology->type));
 			technology_dbus_register(technology);
 
-			if (global_offlinemode)
+			if (global_offlinemode &&
+					technology_disable_in_offlinemode(technology))
 				__connman_rfkill_block(technology->type, true);
 		}
 	}
@@ -2228,9 +2315,9 @@ softblock_change:
 }
 
 int __connman_technology_add_rfkill(unsigned int index,
-					enum connman_service_type type,
-						bool softblock,
-						bool hardblock)
+									enum connman_service_type type,
+									bool softblock,
+									bool hardblock)
 {
 	struct connman_technology *technology;
 	struct connman_rfkill *rfkill;
@@ -2268,15 +2355,15 @@ done:
 
 	/*
 	 * Depending on softblocked state we unblock/block according to
-	 * offlinemode and persistente state.
+	 * offlinemode policy and persistent state.
 	 */
 	if (technology->softblocked &&
-				!global_offlinemode &&
-				technology->enable_persistent)
+			technology_persistent_powered(technology,
+						global_offlinemode))
 		return __connman_rfkill_block(type, false);
 	else if (!technology->softblocked &&
-		(global_offlinemode ||
-				!technology->enable_persistent)) {
+			!technology_persistent_powered(technology,
+						global_offlinemode)) {
 		/* Don't block for technologies which have been enabled
 		   since offlinemode was turned on */
 		if (global_offlinemode_override & (1 << type))
@@ -2289,9 +2376,9 @@ done:
 }
 
 int __connman_technology_update_rfkill(unsigned int index,
-					enum connman_service_type type,
-						bool softblock,
-						bool hardblock)
+										enum connman_service_type type,
+										bool softblock,
+										bool hardblock)
 {
 	struct connman_technology *technology;
 	struct connman_rfkill *rfkill;
@@ -2314,8 +2401,7 @@ int __connman_technology_update_rfkill(unsigned int index,
 	if (!technology)
 		return -ENXIO;
 
-	technology_apply_rfkill_change(technology, softblock, hardblock,
-								false);
+	technology_apply_rfkill_change(technology, softblock, hardblock, false);
 
 	if (technology->hardblocked)
 		DBG("%s hardblocked", get_name(technology->type));

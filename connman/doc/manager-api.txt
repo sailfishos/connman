@@ -315,15 +315,21 @@ Properties	string State [readonly]
 		boolean OfflineMode [readwrite]
 
 			The offline mode indicates the global setting for
-			switching all radios on or off. Changing offline mode
-			to true results in powering down all devices. When
-			leaving offline mode the individual policy of each
-			device decides to switch the radio back on or not.
+			switching technologies into or out of offline mode.
+			Changing offline mode to true powers down the
+			technologies configured to be powered down in offline
+			mode. Ethernet and GPS are not powered down by
+			default. When leaving offline mode the individual
+			policy of each device decides to switch the radio
+			back on or not.
 
 			During offline mode, it is still possible to switch
 			certain technologies manually back on. For example
 			the limited usage of WiFi or Bluetooth devices might
-			be allowed in some situations.
+			be allowed in some situations. Power changes made
+			through the Technology Powered property while offline
+			mode is active are remembered for future offline mode
+			transitions.
 
 		boolean SessionMode [readwrite]  [experminental][deprecated]
 

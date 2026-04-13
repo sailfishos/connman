@@ -69,9 +69,10 @@ technology and disconnects if it is already connected.
 .PP
 .TP
 .B enable offline
-Enables offline mode. Disconnects and powers down all
-technologies system-wide, however each technology can be powered
-back on individually.
+Enables offline mode. Disconnects and powers down the
+technologies configured to be powered down in offline mode.
+Ethernet and GPS keep their current power state by default, and
+each technology can be powered back on individually.
 .PP
 .TP
 .B disable offline

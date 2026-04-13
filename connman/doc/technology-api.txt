@@ -52,6 +52,11 @@ Properties	boolean Powered [readwrite]
 			off (and is available RF-Killed) while True means
 			that the technology is enabled.
 
+			When this property is changed while the Manager
+			OfflineMode property is true, ConnMan also remembers
+			whether the technology should be powered down the
+			next time offline mode is entered.
+
 		boolean Connected [readonly]
 
 			Boolean representing if a technology is connected.
