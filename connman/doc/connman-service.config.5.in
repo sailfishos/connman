@@ -143,6 +143,19 @@ authentication server certificate for EAP.
 Inner authentication type with for \fBEAP=tls\fP or \fBEAP=ttls\fP. Prefix
 the value with \fBEAP-\fP to indicate usage of EAP-based authentication
 method (should only be used with \fBEAP=ttls\fP).
+.BI WifiWPA3SAEPWE= string
+The Password-to-element setting that is used with WiFi connection using WPA3.
+Acceptable values are the same as the represeantations in wpa_supplicant where
+these originate from: "HnP" = Hunt and Peck (0), "H2E" = Hash to Element (1),
+"both" = HnP + H2E (2), "force" = Force HnP + H2E (3). The number details the
+wpa_supplicant.conf value.
+.TP
+Defaults to Hnp (0).
+.TP
+.BI WifiWPA3SAECheckMFP= true\ \fR|\fB\ false
+.TP
+Require PMF support with WPA3 SAE key management. false = Do not check PMF for
+SAE (default), true = Limit SAE when PMF is not enabled.
 .SH "EXAMPLE"
 .SS Eduroam
 This is a configuration file for eduroam networks. This file could for
