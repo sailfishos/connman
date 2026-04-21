@@ -413,10 +413,13 @@ User can use the Technology Powered property to turn on or off a given
 technology. See doc/technology-api.txt document for details.
 
 User can activate offline (flight) mode via Manager OfflineMode property.
-While in offline mode, all the technologies including ethernet are
-powered off. During the offline mode, the user can temporarily activate
+While in offline mode, technologies configured to be powered down in
+offline mode are powered off. Ethernet and GPS keep their current power
+state by default. During the offline mode, the user can change
 individual technologies by using the Technology Powered property or by
 using the rfkill command or Fn-Fx key combination found in some laptops.
+Power changes made through the Technology Powered property while offline
+mode is active are remembered for future offline mode transitions.
 
 If the host supports rfkill switch, then all the radios can be turned off
 by the kernel when the switch is activated. ConnMan will notice this and

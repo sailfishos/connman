@@ -565,6 +565,47 @@ static struct connman_device test_device3 = {
 	.scanning = false,
 };
 
+static int test_device1_enable_err;
+static int test_device1_disable_err;
+static int test_device2_enable_err;
+static int test_device2_disable_err;
+
+static int *get_test_device_err_ptr(struct connman_device *device, bool enable)
+{
+	if (device == &test_device1)
+		return enable ? &test_device1_enable_err :
+				&test_device1_disable_err;
+
+	if (device == &test_device2)
+		return enable ? &test_device2_enable_err :
+				&test_device2_disable_err;
+
+	return NULL;
+}
+
+static void set_test_device_err(struct connman_device *device, bool enable,
+				int err)
+{
+	int *err_ptr = get_test_device_err_ptr(device, enable);
+
+	g_assert(err_ptr);
+	*err_ptr = err;
+}
+
+static int consume_test_device_err(struct connman_device *device, bool enable)
+{
+	int *err_ptr = get_test_device_err_ptr(device, enable);
+	int err = 0;
+
+	if (!err_ptr)
+		return 0;
+
+	err = *err_ptr;
+	*err_ptr = 0;
+
+	return err;
+}
+
 int __connman_device_request_scan(enum connman_service_type type)
 {
 	return 0;
@@ -626,10 +667,16 @@ bool connman_device_get_powered(struct connman_device *device)
 
 int __connman_device_enable(struct connman_device *device)
 {
+	int err;
+
 	DBG("device %p:%s", device, device->ident);
 
 	if (!device)
 		return -EINVAL;
+
+	err = consume_test_device_err(device, true);
+	if (err)
+		return err;
 
 	if (device->enabled)
 		return -EALREADY;
@@ -641,10 +688,16 @@ int __connman_device_enable(struct connman_device *device)
 
 int __connman_device_disable(struct connman_device *device)
 {
+	int err;
+
 	DBG("device %p:%s", device, device->ident);
 
 	if (!device)
 		return -EINVAL;
+
+	err = consume_test_device_err(device, false);
+	if (err)
+		return err;
 
 	if (!device->enabled)
 		return -EALREADY;
@@ -1354,9 +1407,11 @@ static void storage_test_global2()
 				"",
 				"[WiFi]",
 				"Enable=true",
+				"DisableInOfflineMode=false",
 				"",
 				"[Cellular]",
 				"Enable=false",
+				"DisableInOfflineMode=true",
 				"",
 				NULL,
 	};
@@ -1395,10 +1450,18 @@ static void storage_test_global2()
 
 	g_assert_true(g_key_file_has_key(keyfile, "WiFi", "Enable", NULL));
 	g_assert_true(g_key_file_get_boolean(keyfile, "WiFi", "Enable", NULL));
+	g_assert_true(g_key_file_has_key(keyfile, "WiFi",
+				"DisableInOfflineMode", NULL));
+	g_assert_false(g_key_file_get_boolean(keyfile, "WiFi",
+				"DisableInOfflineMode", NULL));
 
 	g_assert_true(g_key_file_has_key(keyfile, "Cellular", "Enable", NULL));
 	g_assert_false(g_key_file_get_boolean(keyfile, "Cellular", "Enable",
 				NULL));
+	g_assert_true(g_key_file_has_key(keyfile, "Cellular",
+				"DisableInOfflineMode", NULL));
+	g_assert_true(g_key_file_get_boolean(keyfile, "Cellular",
+				"DisableInOfflineMode", NULL));
 
 	/* Save and verify content */
 	g_assert_cmpint(__connman_storage_save_global(keyfile), ==, 0);
@@ -5587,10 +5650,12 @@ static void storage_test_technology_callbacks3()
 				"OfflineMode=true",
 				"",
 				"[WiFi]",
-				"Enable=false",
+				"Enable=true",
+				"DisableInOfflineMode=false",
 				"",
 				"[Cellular]",
 				"Enable=true",
+				"DisableInOfflineMode=true",
 				"",
 				NULL,
 	};
@@ -5677,7 +5742,7 @@ static void storage_test_technology_callbacks3()
 	/* user2 has offline mode enabled */
 	change_user_connmand_only(UID_USER2);
 	g_assert_false(test_device1.enabled);
-	g_assert_false(test_device2.enabled);
+	g_assert_true(test_device2.enabled);
 	g_assert_true(__connman_technology_get_offlinemode());
 
 	DBG("remove devices and drivers");
@@ -5690,7 +5755,7 @@ static void storage_test_technology_callbacks3()
 				-ENXIO);
 
 	set_technology_powered(CONNMAN_SERVICE_TYPE_WIFI, false,
-				"net.connman.Error.AlreadyDisabled");
+				NULL);
 	g_assert_cmpint(__connman_technology_remove_device(&test_device2), ==,
 				0);
 	connman_technology_driver_unregister(&test_device2_driver);
@@ -5707,6 +5772,291 @@ static void storage_test_technology_callbacks3()
 	g_free(test_path);
 }
 
+static void storage_test_technology_callbacks4()
+{
+	gchar *test_path;
+	gchar *settings_file;
+	mode_t m_dir = 0700;
+	mode_t m_file = 0600;
+	GKeyFile *keyfile;
+	gchar *content[] = {
+				"[global]",
+				"OfflineMode=false",
+				"",
+				"[WiFi]",
+				"Enable=true",
+				"DisableInOfflineMode=true",
+				"",
+				"[Cellular]",
+				"Enable=true",
+				"DisableInOfflineMode=true",
+				"",
+				NULL,
+	};
+
+	test_path = setup_test_directory();
+
+	init_dbus(TRUE);
+
+	g_assert_cmpint(__connman_storage_init(test_path, test_user_dir, m_dir,
+								m_file), ==, 0);
+	g_assert_cmpint(__connman_storage_create_dir(STORAGEDIR,
+				__connman_storage_dir_mode()), ==, 0);
+
+	__connman_inotify_init();
+
+	settings_file = g_build_filename(STORAGEDIR, "settings", NULL);
+	set_and_verify_content(settings_file, content);
+
+	__connman_technology_init();
+
+	g_assert_cmpint(connman_technology_driver_register(
+				&test_device1_driver), ==, 0);
+	g_assert_cmpint(connman_technology_driver_register(
+				&test_device2_driver), ==, 0);
+
+	g_assert_cmpint(__connman_technology_add_device(&test_device1), ==, 0);
+	g_assert_true(test_device1.enabled);
+
+	g_assert_cmpint(__connman_technology_add_device(&test_device2), ==, 0);
+	g_assert_true(test_device2.enabled);
+
+	set_technology_powered(CONNMAN_SERVICE_TYPE_CELLULAR, true, NULL);
+	g_assert_cmpint(__connman_technology_enabled(
+				CONNMAN_SERVICE_TYPE_CELLULAR), ==, 0);
+	g_assert_true(test_device1.enabled);
+
+	set_technology_powered(CONNMAN_SERVICE_TYPE_WIFI, true, NULL);
+	g_assert_cmpint(__connman_technology_enabled(
+				CONNMAN_SERVICE_TYPE_WIFI), ==, 0);
+	g_assert_true(test_device2.enabled);
+
+	g_assert_cmpint(__connman_technology_set_offlinemode(true), ==, 0);
+	g_assert_true(__connman_technology_get_offlinemode());
+	g_assert_cmpint(__connman_technology_disabled(
+				CONNMAN_SERVICE_TYPE_CELLULAR), ==, 0);
+	g_assert_cmpint(__connman_technology_disabled(
+				CONNMAN_SERVICE_TYPE_WIFI), ==, 0);
+	g_assert_false(test_device1.enabled);
+	g_assert_false(test_device2.enabled);
+
+	set_technology_powered(CONNMAN_SERVICE_TYPE_WIFI, true, NULL);
+	g_assert_cmpint(__connman_technology_enabled(
+				CONNMAN_SERVICE_TYPE_WIFI), ==, 0);
+	g_assert_true(test_device2.enabled);
+
+	g_assert((keyfile = __connman_storage_load_global()));
+	g_assert_true(g_key_file_has_key(keyfile, "WiFi",
+				"DisableInOfflineMode", NULL));
+	g_assert_false(g_key_file_get_boolean(keyfile, "WiFi",
+				"DisableInOfflineMode", NULL));
+	g_key_file_unref(keyfile);
+
+	g_assert_cmpint(__connman_technology_set_offlinemode(false), ==, 0);
+	g_assert_false(__connman_technology_get_offlinemode());
+	g_assert_cmpint(__connman_technology_enabled(
+				CONNMAN_SERVICE_TYPE_CELLULAR), ==, 0);
+	g_assert_true(test_device1.enabled);
+	g_assert_true(test_device2.enabled);
+
+	g_assert_cmpint(__connman_technology_set_offlinemode(true), ==, 0);
+	g_assert_true(__connman_technology_get_offlinemode());
+	g_assert_cmpint(__connman_technology_disabled(
+					CONNMAN_SERVICE_TYPE_CELLULAR), ==, 0);
+	g_assert_false(test_device1.enabled);
+	g_assert_true(test_device2.enabled);
+
+	set_technology_powered(CONNMAN_SERVICE_TYPE_WIFI, false, NULL);
+	g_assert_cmpint(__connman_technology_disabled(
+					CONNMAN_SERVICE_TYPE_WIFI), ==, 0);
+	g_assert_false(test_device2.enabled);
+
+	g_assert((keyfile = __connman_storage_load_global()));
+	g_assert_true(g_key_file_get_boolean(keyfile, "WiFi", "Enable", NULL));
+	g_assert_true(g_key_file_get_boolean(keyfile, "WiFi",
+					"DisableInOfflineMode", NULL));
+	g_key_file_unref(keyfile);
+
+	g_assert_cmpint(__connman_technology_set_offlinemode(false), ==, 0);
+	g_assert_false(__connman_technology_get_offlinemode());
+	g_assert_cmpint(__connman_technology_enabled(
+					CONNMAN_SERVICE_TYPE_CELLULAR), ==, 0);
+	g_assert_true(test_device2.enabled);
+	g_assert_cmpint(__connman_technology_enabled(
+					CONNMAN_SERVICE_TYPE_WIFI), ==, 0);
+
+	set_technology_powered(CONNMAN_SERVICE_TYPE_CELLULAR, false, NULL);
+	g_assert_cmpint(__connman_technology_remove_device(&test_device1), ==,
+					0);
+	connman_technology_driver_unregister(&test_device1_driver);
+
+	set_technology_powered(CONNMAN_SERVICE_TYPE_WIFI, false, NULL);
+	g_assert_cmpint(__connman_technology_remove_device(&test_device2), ==,
+				0);
+	connman_technology_driver_unregister(&test_device2_driver);
+
+	__connman_technology_cleanup();
+	__connman_storage_cleanup();
+	__connman_inotify_cleanup();
+
+	clean_dbus();
+	cleanup_test_directory(test_path);
+
+	g_free(settings_file);
+	g_free(test_path);
+}
+
+static void storage_test_technology_callbacks5()
+{
+	gchar *test_path;
+	gchar *settings_file;
+	mode_t m_dir = 0700;
+	mode_t m_file = 0600;
+	GKeyFile *keyfile;
+	gchar *content[] = {
+				"[global]",
+				"OfflineMode=false",
+				"",
+				"[WiFi]",
+				"Enable=true",
+				"DisableInOfflineMode=true",
+				"",
+				NULL,
+	};
+
+	test_path = setup_test_directory();
+
+	init_dbus(TRUE);
+
+	g_assert_cmpint(__connman_storage_init(test_path, test_user_dir, m_dir,
+								m_file), ==, 0);
+	g_assert_cmpint(__connman_storage_create_dir(STORAGEDIR,
+				__connman_storage_dir_mode()), ==, 0);
+
+	__connman_inotify_init();
+
+	settings_file = g_build_filename(STORAGEDIR, "settings", NULL);
+	set_and_verify_content(settings_file, content);
+
+	__connman_technology_init();
+
+	g_assert_cmpint(connman_technology_driver_register(
+				&test_device2_driver), ==, 0);
+	g_assert_cmpint(__connman_technology_add_device(&test_device2), ==, 0);
+	g_assert_true(test_device2.enabled);
+
+	set_technology_powered(CONNMAN_SERVICE_TYPE_WIFI, true, NULL);
+	g_assert_cmpint(__connman_technology_enabled(
+				CONNMAN_SERVICE_TYPE_WIFI), ==, 0);
+	g_assert_true(test_device2.enabled);
+
+	set_test_device_err(&test_device2, false, -EOPNOTSUPP);
+	g_assert_cmpint(__connman_technology_set_offlinemode(true), ==, 0);
+	g_assert_true(__connman_technology_get_offlinemode());
+	g_assert_true(test_device2.enabled);
+
+	g_assert((keyfile = __connman_storage_load_global()));
+	g_assert_true(g_key_file_has_key(keyfile, "global", "OfflineMode",
+				NULL));
+	g_assert_true(g_key_file_get_boolean(keyfile, "global", "OfflineMode",
+				NULL));
+	g_key_file_unref(keyfile);
+
+	g_assert_cmpint(__connman_technology_set_offlinemode(false), ==, 0);
+	g_assert_false(__connman_technology_get_offlinemode());
+
+	set_technology_powered(CONNMAN_SERVICE_TYPE_WIFI, false, NULL);
+	g_assert_cmpint(__connman_technology_remove_device(&test_device2), ==,
+				0);
+	connman_technology_driver_unregister(&test_device2_driver);
+
+	__connman_technology_cleanup();
+	__connman_storage_cleanup();
+	__connman_inotify_cleanup();
+
+	clean_dbus();
+	cleanup_test_directory(test_path);
+
+	g_free(settings_file);
+	g_free(test_path);
+}
+
+static void storage_test_technology_callbacks6()
+{
+	gchar *test_path;
+	gchar *settings_file;
+	mode_t m_dir = 0700;
+	mode_t m_file = 0600;
+	GKeyFile *keyfile;
+	gchar *content[] = {
+					"[global]",
+					"OfflineMode=false",
+					"",
+					"[WiFi]",
+					"Enable=false",
+					"DisableInOfflineMode=false",
+					"",
+					NULL,
+	};
+
+	test_path = setup_test_directory();
+
+	init_dbus(TRUE);
+
+	g_assert_cmpint(__connman_storage_init(test_path, test_user_dir, m_dir,
+								m_file), ==, 0);
+	g_assert_cmpint(__connman_storage_create_dir(STORAGEDIR,
+					__connman_storage_dir_mode()), ==, 0);
+
+	__connman_inotify_init();
+
+	settings_file = g_build_filename(STORAGEDIR, "settings", NULL);
+	set_and_verify_content(settings_file, content);
+
+	__connman_technology_init();
+
+	g_assert_cmpint(connman_technology_driver_register(
+					&test_device2_driver), ==, 0);
+	g_assert_cmpint(__connman_technology_add_device(&test_device2), ==, 0);
+	g_assert_false(test_device2.enabled);
+
+	g_assert_cmpint(__connman_technology_set_offlinemode(true), ==, 0);
+	g_assert_true(__connman_technology_get_offlinemode());
+	g_assert_false(test_device2.enabled);
+
+	set_technology_powered(CONNMAN_SERVICE_TYPE_WIFI, true, NULL);
+	g_assert_cmpint(__connman_technology_enabled(
+					CONNMAN_SERVICE_TYPE_WIFI), ==, 0);
+	g_assert_true(test_device2.enabled);
+
+	g_assert((keyfile = __connman_storage_load_global()));
+	g_assert_true(g_key_file_get_boolean(keyfile, "WiFi", "Enable", NULL));
+	g_assert_false(g_key_file_get_boolean(keyfile, "WiFi",
+					"DisableInOfflineMode", NULL));
+	g_key_file_unref(keyfile);
+
+	g_assert_cmpint(__connman_technology_set_offlinemode(false), ==, 0);
+	g_assert_false(__connman_technology_get_offlinemode());
+	g_assert_true(test_device2.enabled);
+
+	g_assert_cmpint(__connman_technology_set_offlinemode(true), ==, 0);
+	g_assert_true(__connman_technology_get_offlinemode());
+	g_assert_true(test_device2.enabled);
+
+	set_technology_powered(CONNMAN_SERVICE_TYPE_WIFI, false, NULL);
+	g_assert_cmpint(__connman_technology_remove_device(&test_device2), ==, 0);
+	connman_technology_driver_unregister(&test_device2_driver);
+
+	__connman_technology_cleanup();
+	__connman_storage_cleanup();
+	__connman_inotify_cleanup();
+
+	clean_dbus();
+	cleanup_test_directory(test_path);
+
+	g_free(settings_file);
+	g_free(test_path);
+}
 static void storage_test_path_validation_error1()
 {
 	GKeyFile *keyfile;
@@ -5987,6 +6337,12 @@ int main(int argc, char **argv)
 				storage_test_technology_callbacks2);
 	g_test_add_func(TEST_PREFIX "/test_technology_callbacks3",
 				storage_test_technology_callbacks3);
+	g_test_add_func(TEST_PREFIX "/test_technology_callbacks4",
+				storage_test_technology_callbacks4);
+	g_test_add_func(TEST_PREFIX "/test_technology_callbacks5",
+				storage_test_technology_callbacks5);
+	g_test_add_func(TEST_PREFIX "/test_technology_callbacks6",
+				storage_test_technology_callbacks6);
 	g_test_add_func(TEST_PREFIX "/test_path_validation_error1",
 				storage_test_path_validation_error1);
 	g_test_add_func(TEST_PREFIX "/test_path_validation_error2",
