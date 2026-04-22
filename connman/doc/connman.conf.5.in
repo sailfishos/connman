@@ -261,6 +261,23 @@ maximum and "none" = No WPA3 support, WPA2 is supported at maximum.
 .TP
 Defaults to NULL, or with invalid string.
 .TP
+.BI WifiWPA3SAEPWE= string
+The Password-to-element setting that is used globally with every WiFi
+connection using WPA3. Acceptable values are the same as the represeantations
+in wpa_supplicant where these originate from: "HnP" = Hunt and Peck (0),
+"H2E" = Hash to Element (1), "both" = HnP + H2E (2), "force" = Force HnP + H2E
+(3). The number details the wpa_supplicant.conf value. This setting can be
+overridden with a per service setting of the same name and values.
+.TP
+Defaults to Hnp (0).
+.TP
+.BI WifiWPA3SAECheckMFP= true\ \fR|\fB\ false
+.TP
+Require PMF support with WPA3 SAE key management. false = Do not check PMF for
+SAE (default), true = Limit SAE when PMF is not enabled. This setting can be
+overridden with a per service setting of the same anme and value.
+.TP
+Defaults to false
 .SH "EXAMPLE"
 The following example configuration disables hostname updates and enables
 ethernet tethering.
