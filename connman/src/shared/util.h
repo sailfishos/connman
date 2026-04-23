@@ -34,7 +34,6 @@
 #define WPA3_SAE_PWE_STR_HNP	"HnP"
 #define WPA3_SAE_PWE_STR_H2E	"H2E"
 #define WPA3_SAE_PWE_STR_BOTH	"both"
-#define WPA3_SAE_PWE_STR_FORCE	"force"
 
 
 typedef void (*util_debug_func_t)(const char *str, void *user_data);

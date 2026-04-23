@@ -348,7 +348,6 @@ int util_read_config_files_from(const char *path, const char *suffix,
 static const char *wpa3_sae_pwe_options[] = {	WPA3_SAE_PWE_STR_HNP,
 						WPA3_SAE_PWE_STR_H2E,
 						WPA3_SAE_PWE_STR_BOTH,
-						WPA3_SAE_PWE_STR_FORCE,
 						NULL,
 					};
 

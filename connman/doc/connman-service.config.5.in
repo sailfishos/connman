@@ -147,8 +147,7 @@ method (should only be used with \fBEAP=ttls\fP).
 The Password-to-element setting that is used with WiFi connection using WPA3.
 Acceptable values are the same as the represeantations in wpa_supplicant where
 these originate from: "HnP" = Hunt and Peck (0), "H2E" = Hash to Element (1),
-"both" = HnP + H2E (2), "force" = Force HnP + H2E (3). The number details the
-wpa_supplicant.conf value.
+"both" = HnP + H2E (2). The number details the wpa_supplicant.conf value.
 .TP
 Defaults to Hnp (0).
 .TP
