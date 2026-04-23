@@ -265,9 +265,9 @@ Defaults to NULL, or with invalid string.
 The Password-to-element setting that is used globally with every WiFi
 connection using WPA3. Acceptable values are the same as the represeantations
 in wpa_supplicant where these originate from: "HnP" = Hunt and Peck (0),
-"H2E" = Hash to Element (1), "both" = HnP + H2E (2), "force" = Force HnP + H2E
-(3). The number details the wpa_supplicant.conf value. This setting can be
-overridden with a per service setting of the same name and values.
+"H2E" = Hash to Element (1), "both" = HnP + H2E (2). The number details the
+wpa_supplicant.conf value. This setting can be overridden with a per service
+setting of the same name and values.
 .TP
 Defaults to Hnp (0).
 .TP
