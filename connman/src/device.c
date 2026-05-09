@@ -137,6 +137,24 @@ static const char *type2string(enum connman_device_type type)
 	return NULL;
 }
 
+enum connman_device_type __connman_device_string2type(const char *str)
+{
+	if (!g_strcmp0(str,"ethernet"))
+		return CONNMAN_DEVICE_TYPE_ETHERNET;
+	if (!g_strcmp0(str,"wifi"))
+		return CONNMAN_DEVICE_TYPE_WIFI;
+	if (!g_strcmp0(str,"bluetooth"))
+		return CONNMAN_DEVICE_TYPE_BLUETOOTH;
+	if (!g_strcmp0(str,"gps"))
+		return CONNMAN_DEVICE_TYPE_GPS;
+	if (!g_strcmp0(str,"cellular"))
+		return CONNMAN_DEVICE_TYPE_CELLULAR;
+	if (!g_strcmp0(str,"gadget"))
+		return CONNMAN_DEVICE_TYPE_GADGET;
+
+	return CONNMAN_DEVICE_TYPE_UNKNOWN;
+}
+
 enum connman_service_type __connman_device_get_service_type(
 				struct connman_device *device)
 {
