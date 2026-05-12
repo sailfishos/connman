@@ -644,10 +644,16 @@ static GHashTable *parse_fallback_device_types(char **devtypes, gsize len)
 		v = g_strsplit(devtypes[i], ":", 2);
 		if (!v)
 			continue;
-
-		if (v[0] && v[1])
-			g_hash_table_replace(h, g_strdup(v[0]),
-					g_strdup(v[1]));
+		
+		if (v[0] && v[1]) {
+			if (__connman_device_string2type(v[1]) ==
+						CONNMAN_DEVICE_TYPE_UNKNOWN)
+				connman_warn("Invalid FallbackDeviceType in %s",
+								devtypes[i]);
+			else
+				g_hash_table_replace(h, g_strdup(v[0]),
+								g_strdup(v[1]));
+		}	
 
 		g_strfreev(v);
 	}
