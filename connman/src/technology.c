@@ -34,6 +34,7 @@
 #include "connman.h"
 
 #define DELAYED_TIMEOUT 300
+#define DELAYED_TETHERING_TIMEOUT 100
 
 static DBusConnection *connection;
 
@@ -70,6 +71,7 @@ struct connman_technology {
 	bool connected;
 
 	bool tethering;
+	bool tethering_pending;
 	bool tethering_persistent; /* Tells the save status, needed
 					      * as offline mode might set
 					      * tethering OFF.
@@ -91,6 +93,8 @@ struct connman_technology {
 	bool softblocked;
 	bool hardblocked;
 	bool dbus_registered;
+
+	guint tethering_delayed_id;
 };
 
 static GSList *driver_list = NULL;
@@ -338,6 +342,37 @@ int connman_technology_tethering_notify(struct connman_technology *technology,
 	return 0;
 }
 
+static int set_tethering_prepare(struct connman_technology *technology,
+				bool enabled)
+{
+	GSList *tech_drivers;
+
+	DBG("");
+
+	for (tech_drivers = technology->driver_list; tech_drivers;
+				tech_drivers = g_slist_next(tech_drivers)) {
+		struct connman_technology_driver *driver =
+						tech_drivers->data;
+
+		if (!driver || !driver->set_tethering_prepare)
+			continue;
+
+		if (driver->set_tethering_prepare(technology, enabled)
+							!= -EINPROGRESS)
+			continue;
+
+		technology->tethering_pending = enabled;
+		DBG("called tethering prepare on %p", technology);
+
+		if (enabled) {
+			DBG("wait for the interface to come up");
+			return -EINPROGRESS;
+		}
+	}
+
+	return 0;
+}
+
 static int set_tethering(struct connman_technology *technology,
 				bool enabled)
 {
@@ -360,6 +395,14 @@ static int set_tethering(struct connman_technology *technology,
 	if (technology->type == CONNMAN_SERVICE_TYPE_WIFI &&
 	    (!ident || !passphrase))
 		return -EINVAL;
+
+	/* Run preparations before enabling only */
+	if (!technology->tethering_pending && enabled) {
+		DBG("run tethering pre-action");
+		err = set_tethering_prepare(technology, enabled);
+		if (err)
+			return err;
+	}
 
 	/*
 	 * Notify about tethering being turned on before it actually gets
@@ -385,6 +428,14 @@ static int set_tethering(struct connman_technology *technology,
 			result = err;
 	}
 
+	/* Run post-action (as prepare cb) after disabling tethering. */
+	if (!technology->tethering_pending && !enabled) {
+		DBG("run tethering post-action");
+		err = set_tethering_prepare(technology, enabled);
+		if (err && err != -EINPROGRESS)
+			return err;
+	}
+
 	/*
 	 * Let notificants know that we have failed to turn tethering on.
 	 * Note that we won't be able to do that in case if the driver
@@ -396,6 +447,30 @@ static int set_tethering(struct connman_technology *technology,
 		__connman_notifier_tethering_changed(technology, FALSE);
 
 	return result;
+}
+
+gboolean set_tethering_delayed(gpointer user_data)
+{
+	struct connman_technology *technology = user_data;
+	int err;
+
+	DBG("");
+
+	if (!technology->tethering_pending) {
+		DBG("technology %p not pending tethering", technology);
+
+		technology->tethering_delayed_id = 0;
+		return G_SOURCE_REMOVE;
+	}
+
+	err = set_tethering(technology, true);
+	if (err < 0 && err != -EINPROGRESS) {
+		DBG("failed to do delayed enabling of tethering");
+	}
+
+	technology->tethering_pending = false;
+	technology->tethering_delayed_id = 0;
+	return G_SOURCE_REMOVE;
 }
 
 void connman_technology_regdom_notify(struct connman_technology *technology,
@@ -1266,10 +1341,12 @@ static DBusMessage *set_property(DBusConnection *conn,
 		}
 
 		err = set_tethering(technology, tethering);
-		if (err < 0)
+		if (err < 0 && err != -EINPROGRESS)
 			return __connman_error_failed(msg, -err);
 
 		technology->tethering_persistent = tethering;
+		DBG("tech %p tethering_persistent %d", technology,
+						technology->tethering_persistent);
 
 		technology_save(technology);
 
@@ -1747,8 +1824,29 @@ void __connman_technology_add_interface(enum connman_service_type type,
 	 * At this point we can try to enable tethering automatically as
 	 * now the interfaces are set properly.
 	 */
-	if (technology->tethering_persistent)
-		enable_tethering(technology);
+	if (technology->tethering_persistent) {
+		/*
+		 * If the technology has tethering awaiting for an interface
+		 * to come up do it instead of persistent tethering enabling
+		 * via enable_tethering() by scheduling the event for later
+		 * after the technology plugin has registered the interfaces
+		 * after the interface has been added. Doing tethering enable
+		 * here would be too early for the plugins and the interface
+		 * selected would be a wrong one.
+		 */
+		if (technology->tethering_pending) {
+			DBG("start delayed tethering");
+			if (technology->tethering_delayed_id)
+				g_source_remove(
+					technology->tethering_delayed_id);
+
+			technology->tethering_delayed_id = g_timeout_add(
+					DELAYED_TETHERING_TIMEOUT,
+					set_tethering_delayed, technology);
+		} else {
+			enable_tethering(technology);
+		}
+	}
 
 out:
 	g_free(name);
