@@ -78,6 +78,9 @@ extern "C" {
 #define CONF_WIFI_WPA3_SAE_PWE               "WifiWPA3SAEPWE"
 #define CONF_WIFI_WPA3_SAE_CHECK_MFP         "WifiWPA3SAECheckMFP"
 
+#define CONF_WIFI_WMT_ENABLE_SEQUENCE        "WifiWMTEnableSequence"
+#define CONF_WIFI_WMT_DISABLE_SEQUENCE       "WifiWMTDisableSequence"
+
 #define CONF_OPTION_CONFIG                   "config"
 #define CONF_OPTION_DEBUG                    "debug"
 #define CONF_OPTION_DEVICE                   "device"
