@@ -215,9 +215,9 @@ vpn_connman_vpnd_SOURCES = $(builtin_vpn_sources) $(backtrace_sources) \
 			vpn/vpn-provider.h vpn/vpn-rtnl.h \
 			vpn/vpn-ipconfig.c src/inet.c vpn/vpn-rtnl.c \
 			src/dbus.c src/storage.c src/ipaddress.c src/agent.c \
-			vpn/access.c vpn/vpn-agent.c vpn/vpn-agent.h \
-			src/inotify.c vpn/vpn-config.c src/fsid.c \
-			vpn/vpn-settings.c vpn/vpn-util.c src/shared/util.c
+			vpn/vpn-agent.c vpn/vpn-agent.h src/inotify.c \
+			vpn/vpn-config.c vpn/vpn-settings.c vpn/vpn-util.c \
+			vpn/access.c src/fsid.c src/shared/util.c
 
 vpn_connman_vpnd_LDADD = gdbus/libgdbus-internal.la $(builtin_vpn_libadd) \
 				@GLIB_LIBS@ @DBUS_LIBS@ @GNUTLS_LIBS@ @DBUSACCESS_LIBS@ \
