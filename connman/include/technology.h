@@ -65,6 +65,8 @@ struct connman_technology_driver {
 	int (*set_regdom) (struct connman_technology *technology,
 						const char *alpha2);
 	void (*set_offline) (bool offline);
+	int (*set_tethering_prepare) (struct connman_technology *technology,
+				bool enabled);
 };
 
 int connman_technology_driver_register(struct connman_technology_driver *driver);

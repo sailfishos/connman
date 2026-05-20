@@ -106,8 +106,9 @@
 #define NETWORK_KEY_WIFI_SAE_PWE                "WiFi.SAEPWE"
 #define NETWORK_KEY_WIFI_SAE_CHECK_MFP          "WiFi.SAECheckMFP"
 
-
 #define NETWORK_EAP_DEFAULT                     "default"
+
+#define WMTWIFI_PATH				"/dev/wmtWifi"
 
 enum supplicant_events {
 	SUPPLICANT_EVENT_VALID,
@@ -322,6 +323,9 @@ struct wifi_plugin {
 	gulong supplicant_event_id[SUPPLICANT_EVENT_COUNT];
 	struct connman_technology *tech;
 	gboolean running;
+	gboolean wmtWiFi;
+	gboolean tethering_pending;
+	int tethering_index;
 	GSList *devices;
 };
 
@@ -3796,8 +3800,6 @@ static int wifi_device_on_start(struct wifi_device *dev)
 
 static void wifi_device_bridge_check(struct wifi_device *dev)
 {
-	DBG("");
-
 	if ((dev->iff & IFF_LOWER_UP) && dev->tethering &&
 					dev->bridge && !dev->bridged) {
 		DBG("index %d bridge %s", dev->ifi, dev->bridge);
@@ -4729,6 +4731,20 @@ static int wifi_plugin_set_tethering(struct wifi_plugin *plugin,
 				turning_tethering_on = TRUE;
 			} else if (iface && iface->valid && (iface->caps.modes &
 					GSUPPLICANT_INTERFACE_CAPS_MODES_AP)) {
+				/*
+				 * A wmtWifi device and expecting a separate AP
+				 * interface (device).
+				 */
+				if (plugin->wmtWiFi &&
+						plugin->tethering_pending) {
+					if (plugin->tethering_index != dev->ifi)
+						continue;
+
+					DBG("Found new AP interface index %d",
+								dev->ifi);
+					plugin->tethering_pending = false;
+				}
+
 				ap_dev = dev;
 			}
 		}
@@ -4754,10 +4770,15 @@ static int wifi_plugin_set_tethering(struct wifi_plugin *plugin,
 		for (l = plugin->devices; l; l = l->next) {
 			struct wifi_device *dev = l->data;
 
+			/* Skip reset on non-tethering devices */
+			if (!dev->tethering)
+				continue;
+
 			dev->tethering = NULL;
 			wifi_device_scan_check(dev);
 			wifi_device_on_start(dev);
 		}
+		plugin->tethering_index = 0;
 		connman_technology_tethering_notify(plugin->tech, false);
 		return 0;
 	}
@@ -4815,6 +4836,8 @@ static struct wifi_plugin *wifi_plugin_new(void)
 	wpa3_support = convert_wpa3_support(wpa3_support_str);
 	DBG("Set WPA3 support level to %d/%s", wpa3_support, wpa3_support_str);
 	gsupplicant_set_wpa3_support(plugin->supplicant, wpa3_support);
+
+	plugin->wmtWiFi = g_file_test(WMTWIFI_PATH, G_FILE_TEST_EXISTS);
 
 	return plugin;
 }
@@ -4887,20 +4910,119 @@ static int wifi_tech_driver_set_tethering(struct connman_technology *tech,
 				const char *ident, const char *passphrase,
 				const char *bridge, bool enabled)
 {
-	if (wifi_plugin && wifi_plugin->tech) {
-		GASSERT(wifi_plugin->tech == tech);
-		return wifi_plugin_set_tethering(wifi_plugin, ident,
-					passphrase, bridge, enabled);
+	if (!wifi_plugin || !wifi_plugin->tech)
+		return -EFAULT;
+
+	GASSERT(wifi_plugin->tech == tech);
+
+	return wifi_plugin_set_tethering(wifi_plugin, ident, passphrase, bridge,
+						enabled);
+}
+
+#include <fcntl.h>
+
+static int write_to_fd(int fd, const char cmd)
+{
+	if (write(fd, &cmd, 1) != 1) {
+		connman_error("cannot write \"%c\" to fd %d", cmd, fd);
+		return -errno;
 	}
-	return (-EFAULT);
+
+	return 0;
+}
+
+static int send_wmtWifi_sequence(struct connman_technology *technology,
+								bool enabled)
+{
+	const char *sequence;
+	int err = 0;
+	int fd;
+	int i;
+
+	sequence = connman_setting_get_string(enabled ?
+						CONF_WIFI_WMT_ENABLE_SEQUENCE :
+						CONF_WIFI_WMT_DISABLE_SEQUENCE);
+	if (!sequence) {
+		connman_warn("No %s sequence configured for wmtWifi", enabled ?
+						"enable" : "disable");
+		return -ENOENT;
+	}
+
+	fd = open(WMTWIFI_PATH, O_RDWR|O_SYNC);
+	if (fd < 0) {
+		connman_error("Cannot open wmtWifi device %s: %s", WMTWIFI_PATH,
+							strerror(errno));
+		return -EACCES;
+	}
+
+	for (i = 0; i < strlen(sequence); i++) {
+		err = write_to_fd(fd, sequence[i]);
+		if (err)
+			break;
+
+	}
+
+	close(fd);
+
+	DBG("%s sequence %s", sequence, err ? "failed" : "sent");
+
+	return err;
+}
+
+static bool is_wmtWiFi(struct connman_technology *tech)
+{
+	return connman_technology_get_type(tech) == CONNMAN_SERVICE_TYPE_WIFI &&
+							wifi_plugin->wmtWiFi;
+}
+
+static int wifi_tech_driver_set_tethering_prepare(
+				struct connman_technology *tech, bool enabled)
+{
+	int err;
+
+	if (!wifi_plugin || !wifi_plugin->tech)
+		return -EINVAL;
+
+	GASSERT(wifi_plugin->tech == tech);
+
+	if (!is_wmtWiFi(tech))
+		return -ENODEV;
+
+	err = send_wmtWifi_sequence(tech, enabled);
+	if (err) {
+		connman_error("Failed to prepare for tethering: %d/%s", err,
+						strerror(-err));
+		return -EFAULT;
+	}
+
+	wifi_plugin->tethering_pending = enabled;
+
+	return -EINPROGRESS;
+}
+
+static void wifi_tech_driver_add_interface(struct connman_technology *tech,
+				int index, const char *name, const char *ident)
+{
+	if (!wifi_plugin || !wifi_plugin->tech)
+		return;
+
+	GASSERT(wifi_plugin->tech == tech);
+
+	if (!wifi_plugin->tethering_pending)
+		return;
+
+	DBG("New tethering interface %d/%s", index, name);
+	wifi_plugin->tethering_index = index;
 }
 
 static struct connman_technology_driver wifi_tech_driver = {
-	.name		= "wifi",
-	.type		= CONNMAN_SERVICE_TYPE_WIFI,
-	.probe		= wifi_tech_driver_probe,
-	.remove		= wifi_tech_driver_remove,
-	.set_tethering	= wifi_tech_driver_set_tethering
+	.name			= "wifi",
+	.type			= CONNMAN_SERVICE_TYPE_WIFI,
+	.probe			= wifi_tech_driver_probe,
+	.add_interface		= wifi_tech_driver_add_interface,
+	.remove			= wifi_tech_driver_remove,
+	.set_tethering		= wifi_tech_driver_set_tethering,
+	.set_tethering_prepare	= wifi_tech_driver_set_tethering_prepare,
 };
 
 static int sailfish_wifi_init(void)

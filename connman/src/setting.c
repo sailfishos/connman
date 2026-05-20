@@ -96,6 +96,8 @@ static struct {
 	char *localtime;
 	char *wifi_wpa3_support;
 	char *wifi_wpa3_sae_pwe;
+	char *wifi_wmt_enable_sequence;
+	char *wifi_wmt_disable_sequence;
 	unsigned int *auto_connect;
 	unsigned int *favorite_techs;
 	unsigned int *preferred_techs;
@@ -180,6 +182,8 @@ enum option_val {
 	CONF_WIFI_WPA3_SUPPORT_VAL,
 	CONF_WIFI_WPA3_SAE_PWE_VAL,
 	CONF_WIFI_WPA3_SAE_CHECK_MFP_VAL,
+	CONF_WIFI_WMT_ENABLE_SEQUENCE_VAL,
+	CONF_WIFI_WMT_DISABLE_SEQUENCE_VAL,
 };
 
 enum option_type {
@@ -331,6 +335,12 @@ struct {
 	{CONF_WIFI_WPA3_SAE_CHECK_MFP,
 					CONF_WIFI_WPA3_SAE_CHECK_MFP_VAL,
 					CONF_TYPE_BOOL},
+	{CONF_WIFI_WMT_ENABLE_SEQUENCE,
+					CONF_WIFI_WMT_ENABLE_SEQUENCE_VAL,
+					CONF_TYPE_CHAR},
+	{CONF_WIFI_WMT_DISABLE_SEQUENCE,
+					CONF_WIFI_WMT_DISABLE_SEQUENCE_VAL,
+					CONF_TYPE_CHAR},
 	{ 0 }
 };
 
@@ -405,6 +415,12 @@ const char *connman_setting_get_string(const char *key)
 
 	if (g_str_equal(key, CONF_WIFI_WPA3_SAE_PWE))
 		return connman_settings.wifi_wpa3_sae_pwe;
+
+	if (g_str_equal(key, CONF_WIFI_WMT_ENABLE_SEQUENCE))
+		return connman_settings.wifi_wmt_enable_sequence;
+
+	if (g_str_equal(key, CONF_WIFI_WMT_DISABLE_SEQUENCE))
+		return connman_settings.wifi_wmt_disable_sequence;
 
 	return NULL;
 }
@@ -890,6 +906,12 @@ static void read_config_value(GKeyFile *config, const char *key, bool append)
 		str_ptr = &connman_settings.wifi_wpa3_sae_pwe;
 		check_cb = check_wpa3_sae_pwe;
 		break;
+	case CONF_WIFI_WMT_ENABLE_SEQUENCE_VAL:
+		str_ptr = &connman_settings.wifi_wmt_enable_sequence;
+		break;
+	case CONF_WIFI_WMT_DISABLE_SEQUENCE_VAL:
+		str_ptr = &connman_settings.wifi_wmt_disable_sequence;
+		break;
 
 	/* str list */
 	case CONF_FALLBACK_TIMESERVERS_VAL:
@@ -1264,6 +1286,9 @@ void __connman_setting_cleanup()
 	g_free(connman_settings.user_storage_dir);
 	g_free(connman_settings.vendor_class_id);
 	g_free(connman_settings.localtime);
+	g_free(connman_settings.wifi_wpa3_sae_pwe);
+	g_free(connman_settings.wifi_wmt_enable_sequence);
+	g_free(connman_settings.wifi_wmt_disable_sequence);
 
 	g_free(connman_settings.auto_connect);
 	g_free(connman_settings.favorite_techs);
