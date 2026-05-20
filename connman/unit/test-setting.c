@@ -29,6 +29,11 @@ int __connman_device_request_scan(enum connman_service_type type)
 	return 0;
 }
 
+enum connman_device_type __connman_device_string2type(const char *str)
+{
+	return CONNMAN_DEVICE_TYPE_UNKNOWN;
+}
+
 int __connman_ipconfig_ipv6_set_privacy(struct connman_ipconfig *ipconfig,
 		const char *value)
 {

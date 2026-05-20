@@ -3016,11 +3016,14 @@ static int set_string(struct vpn_provider *provider,
 		hide_value ? "<not printed>" : value);
 
 	if (g_str_equal(key, "Type")) {
-		if (!g_strcmp0(provider->type, value))
+		char *type = g_ascii_strdown(value, -1);
+		if (!g_strcmp0(provider->type, type)) {
+			g_free(type);
 			return -EALREADY;
+		}
 
 		g_free(provider->type);
-		provider->type = g_ascii_strdown(value, -1);
+		provider->type = type;
 		send_value(provider->path, "Type", provider->type);
 	} else if (g_str_equal(key, "Name")) {
 		if (!g_strcmp0(provider->name, value))
