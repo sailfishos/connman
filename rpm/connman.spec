@@ -50,6 +50,8 @@ BuildRequires:  usb-moded-devel >= 0.86.0+mer31
 BuildRequires:  libglibutil-devel
 BuildRequires:  libdbusaccess-devel
 BuildRequires:  libmnl-devel
+BuildRequires:  pkgconfig(libnl-3.0)
+BuildRequires:  pkgconfig(libnl-genl-3.0)
 
 %description
 Connection Manager provides a daemon for managing Internet connections
