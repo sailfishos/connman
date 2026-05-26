@@ -122,6 +122,7 @@ static struct {
 	bool default_mdns_configuration;
 	bool tethering_mdns_configuration;
 	bool wifi_wpa3_sae_check_mfp;
+	bool wifi_wmt_dual_mode;
 	mode_t storage_root_permissions;
 	mode_t storage_dir_permissions;
 	mode_t storage_file_permissions;
@@ -184,6 +185,7 @@ enum option_val {
 	CONF_WIFI_WPA3_SAE_CHECK_MFP_VAL,
 	CONF_WIFI_WMT_ENABLE_SEQUENCE_VAL,
 	CONF_WIFI_WMT_DISABLE_SEQUENCE_VAL,
+	CONF_WIFI_WMT_DUAL_MODE_VAL,
 };
 
 enum option_type {
@@ -341,6 +343,9 @@ struct {
 	{CONF_WIFI_WMT_DISABLE_SEQUENCE,
 					CONF_WIFI_WMT_DISABLE_SEQUENCE_VAL,
 					CONF_TYPE_CHAR},
+	{CONF_WIFI_WMT_DUAL_MODE,
+					CONF_WIFI_WMT_DUAL_MODE_VAL,
+					CONF_TYPE_BOOL},
 	{ 0 }
 };
 
@@ -477,6 +482,9 @@ bool connman_setting_get_bool(const char *key)
 
 	if (g_str_equal(key, CONF_WIFI_WPA3_SAE_CHECK_MFP))
 		return connman_settings.wifi_wpa3_sae_check_mfp;
+
+	if (g_str_equal(key, CONF_WIFI_WMT_DUAL_MODE))
+		return connman_settings.wifi_wmt_dual_mode;
 
 	return false;
 }
@@ -868,6 +876,9 @@ static void read_config_value(GKeyFile *config, const char *key, bool append)
 		break;
 	case CONF_WIFI_WPA3_SAE_CHECK_MFP_VAL:
 		bool_ptr = &connman_settings.wifi_wpa3_sae_check_mfp;
+		break;
+	case CONF_WIFI_WMT_DUAL_MODE_VAL:
+		bool_ptr = &connman_settings.wifi_wmt_dual_mode;
 		break;
 
 	/* str */
