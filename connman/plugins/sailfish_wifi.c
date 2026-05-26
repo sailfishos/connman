@@ -321,6 +321,7 @@ struct wifi_device {
 	GSList *active_scans;
 	unsigned int watch;
 	struct connman_technology *tethering;
+	bool enable_after_tethering;
 	gboolean bridged;
 	char *bridge;
 	unsigned int bridge_watch;
@@ -335,6 +336,7 @@ struct wifi_plugin {
 	struct connman_technology *tech;
 	gboolean running;
 	gboolean wmtWiFi;
+	gboolean wmtWiFiDualMode;
 	gboolean tethering_pending;
 	int tethering_index;
 	GSList *devices;
@@ -5000,6 +5002,31 @@ static struct connman_device_driver wifi_device_driver = {
  * Plugin
  *==========================================================================*/
 
+static void wifi_plugin_toggle_devices(struct wifi_plugin *plugin, bool enable,
+						struct wifi_device *exclude)
+{
+	GSList *l;
+	for (l = plugin->devices; l; l = l->next) {
+		struct wifi_device *dev = l->data;
+		if (dev == exclude || dev->tethering)
+			continue;
+
+		if (enable) {
+			if (dev->enable_after_tethering) {
+				DBG("enable %p", dev);
+				dev->enable_after_tethering = false;
+				wifi_device_enable(dev);
+				wifi_device_scan_check(dev);
+				wifi_device_on_start(dev);
+			}
+		} else {
+			DBG("disable %p", dev);
+			dev->enable_after_tethering = true;
+			wifi_device_disable(dev);
+		}
+	}
+}
+
 static int wifi_plugin_set_tethering(struct wifi_plugin *plugin,
 				const char *ssid, const char *passphrase,
 				const char *bridge, bool enabled)
@@ -5046,6 +5073,14 @@ static int wifi_plugin_set_tethering(struct wifi_plugin *plugin,
 				DBG("already tethering");
 				return (-EALREADY);
 			} else {
+				/*
+				 * Disable all except the tethering dev when the
+				 * dual mode is not enabled.
+				 */
+				if (plugin->wmtWiFi && !plugin->wmtWiFiDualMode)
+					wifi_plugin_toggle_devices(plugin,
+								false, ap_dev);
+
 				/* Start tethering */
 				return wifi_device_tether_start(ap_dev,
 							plugin->tech, bridge,
@@ -5072,6 +5107,14 @@ static int wifi_plugin_set_tethering(struct wifi_plugin *plugin,
 		}
 		plugin->tethering_index = 0;
 		connman_technology_tethering_notify(plugin->tech, false);
+
+		/*
+		 * Re-enable devices that were disabled when tethering was
+		 * enabled in non-dual mode.
+		 */
+		if (plugin->wmtWiFi && !plugin->wmtWiFiDualMode)
+			wifi_plugin_toggle_devices(plugin, true, NULL);
+
 		return 0;
 	}
 }
@@ -5130,6 +5173,8 @@ static struct wifi_plugin *wifi_plugin_new(void)
 	gsupplicant_set_wpa3_support(plugin->supplicant, wpa3_support);
 
 	plugin->wmtWiFi = g_file_test(WMTWIFI_PATH, G_FILE_TEST_EXISTS);
+	plugin->wmtWiFiDualMode = connman_setting_get_bool(
+						CONF_WIFI_WMT_DUAL_MODE);
 
 	return plugin;
 }
