@@ -5325,6 +5325,13 @@ static int wifi_tech_driver_set_tethering_prepare(
 	if (!is_wmtWiFi(tech))
 		return -ENODEV;
 
+	/*
+	 * Prevent to send multiple enable sequences. Allow to always send
+	 * disable sequence.
+	 */
+	if (enabled && wifi_plugin->tethering_pending)
+		return -EALREADY;
+
 	err = send_wmtWifi_sequence(tech, enabled);
 	if (err) {
 		connman_error("Failed to prepare for tethering: %d/%s", err,
