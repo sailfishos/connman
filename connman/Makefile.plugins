@@ -29,6 +29,8 @@ endif
 if SAILFISH_WIFI
 builtin_modules += sailfish_wifi
 builtin_sources += plugins/sailfish_wifi.c plugins/sailfish_signalpoll.c
+src_connmand_CFLAGS += $(LIBNL_CFLAGS)
+src_connmand_LDFLAGS += $(LIBNL_LIBS)
 endif
 
 if IWD

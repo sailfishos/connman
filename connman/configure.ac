@@ -125,6 +125,11 @@ PKG_CHECK_MODULES(LIBIPTC, libiptc >= 0.27.1, dummy=yes,
 AC_SUBST(LIBIPTC_CFLAGS)
 AC_SUBST(LIBIPTC_LIBS)
 
+PKG_CHECK_MODULES(LIBNL, [libnl-3.0 libnl-genl-3.0], dummy=yes,
+			AC_MSG_ERROR(Libnl library is required))
+AC_SUBST(LIBNL_CFLAGS)
+AC_SUBST(LIBNL_LIBS)
+
 AC_ARG_WITH(openconnect, AC_HELP_STRING([--with-openconnect=PROGRAM],
         [specify location of openconnect binary]), [path_openconnect=${withval}])
 
