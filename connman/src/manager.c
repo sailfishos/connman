@@ -64,6 +64,7 @@ static DBusMessage *get_properties(DBusConnection *conn,
 	DBusMessage *reply;
 	DBusMessageIter array, dict;
 	dbus_bool_t offlinemode;
+	dbus_bool_t wmtWifiDualMode;
 	dbus_uint32_t uint32_value;
 	const char *str;
 	const char *ipv4_status_url;
@@ -110,6 +111,10 @@ static DBusMessage *get_properties(DBusConnection *conn,
 
 	connman_dbus_dict_append_basic(&dict, "WiFiWPA3Support",
 						DBUS_TYPE_STRING, &str);
+
+	wmtWifiDualMode = connman_setting_get_bool(CONF_WIFI_WMT_DUAL_MODE);
+	connman_dbus_dict_append_basic(&dict, "WiFiWMTDualMode",
+					DBUS_TYPE_BOOLEAN, &wmtWifiDualMode);
 
 	connman_dbus_dict_close(&array, &dict);
 

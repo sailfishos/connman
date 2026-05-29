@@ -80,6 +80,7 @@ extern "C" {
 
 #define CONF_WIFI_WMT_ENABLE_SEQUENCE        "WifiWMTEnableSequence"
 #define CONF_WIFI_WMT_DISABLE_SEQUENCE       "WifiWMTDisableSequence"
+#define CONF_WIFI_WMT_DUAL_MODE              "WifiWMTDualMode"
 
 #define CONF_OPTION_CONFIG                   "config"
 #define CONF_OPTION_DEBUG                    "debug"

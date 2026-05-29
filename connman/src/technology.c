@@ -357,6 +357,11 @@ static int set_tethering_prepare(struct connman_technology *technology,
 		if (!driver || !driver->set_tethering_prepare)
 			continue;
 
+		if (enabled && technology->tethering_pending) {
+			DBG("skip tethering prepare, already pending");
+			continue;
+		}
+
 		if (driver->set_tethering_prepare(technology, enabled)
 							!= -EINPROGRESS)
 			continue;
