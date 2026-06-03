@@ -327,7 +327,6 @@ struct wifi_device {
 	unsigned int bridge_watch;
 	int nl_id;
 	struct nl_sock *nl_fd;
-	unsigned int nl_monitor_id;
 };
 
 struct wifi_plugin {
@@ -780,11 +779,15 @@ static void wifi_network_drop_interface(struct wifi_network *net)
 	wifi_network_disconnect_timeout_cancel(net);
 }
 
+static gboolean wifi_network_get_maxrate(struct wifi_network *net);
+
 static void wifi_network_signalpoll(struct signalpoll *poll, void *data)
 {
 	struct wifi_network *net = data;
 
-	connman_network_set_strength(net->network, poll->average);
+	/* Update maxrate when signal strength changes. */
+	if (!connman_network_set_strength(net->network, poll->average))
+		wifi_network_get_maxrate(net);
 }
 
 static inline gboolean wifi_network_state_connecting(WIFI_NETWORK_STATE state)
@@ -902,41 +905,24 @@ static int error_cb(struct sockaddr_nl *nla, struct nlmsgerr *err, void *arg)
 
 static GSupplicantBSS *wifi_network_current_bss(struct wifi_network *net);
 
-static gboolean wifi_monitor_poll(gpointer data)
+static gboolean send_nl_msg(struct wifi_network *net)
 {
-	struct wifi_network *net = data;
-	struct wifi_device *dev;
+	struct wifi_device *dev = net->dev;
 	struct nl_msg *msg = NULL;
 	GSupplicantBSS *bss;
 	const unsigned char *bssid_data;
 	gsize bssid_len;
-	int err;
-
-	if (!net) {
-		DBG("no net");
-		return G_SOURCE_REMOVE;
-	}
-
-	dev = net->dev;
-	if (!dev) {
-		DBG("no dev");
-		return G_SOURCE_REMOVE;
-	}
-
-	if (!dev->nl_fd) {
-		DBG("socket already free'd/not set, remove from main loop");
-		goto err;
-	}
+	gboolean ret = FALSE;
 
 	bss = wifi_network_current_bss(net);
 	if (!bss) {
-		DBG("no BSSID set, removing from main loop");
+		DBG("no BSSID set, cannot send msg");
 		goto err;
 	}
 
 	bssid_data = g_bytes_get_data(bss->bssid, &bssid_len);
 	if (!bssid_data || bssid_len != WIFI_BSSID_LEN) {
-		DBG("Invalid BSSID, removing from main loop");
+		DBG("Invalid BSSID, cannot send msg");
 		goto err;
 	}
 
@@ -965,10 +951,19 @@ static gboolean wifi_monitor_poll(gpointer data)
 		goto err;
 	}
 
-	if (nl_recvmsgs_default(dev->nl_fd)) {
-		DBG("cannot receive msgs: %d/%s", errno, strerror(errno));
-		goto err;
-	}
+	ret = TRUE;
+
+err:
+	if (msg)
+		nlmsg_free(msg);
+
+	return ret;
+}
+
+static gboolean recv_nl_msg(struct wifi_network *net)
+{
+	struct wifi_device *dev = net->dev;
+	int err;
 
 	/*
 	 * Loop through all messages in buffer. nl_recvmsgs_default() reports
@@ -984,79 +979,68 @@ static gboolean wifi_monitor_poll(gpointer data)
 
 			DBG("cannot receive msgs: %d/%s", errno,
 							strerror(errno));
-			goto err;
+			return FALSE;
 		}
 	} while (err > 0);
 
-	nlmsg_free(msg);
-
-	return G_SOURCE_CONTINUE;
-
-err:
-	if (msg)
-		nlmsg_free(msg);
-
-	dev->nl_monitor_id = 0;
-	return G_SOURCE_REMOVE;
+	return TRUE;
 }
 
-static gboolean wifi_network_init_nl_maxrate_monitor(struct wifi_network *net)
+static gboolean wifi_network_get_maxrate(struct wifi_network *net)
 {
 	struct wifi_device *dev;
 
-	if (!net)
+	if (!net || !net->dev)
 		return FALSE;
 
 	dev = net->dev;
-	if (!dev)
-		return FALSE;
-
 	DBG("dev %p", dev);
 
-	if (dev->nl_fd)
-		nl_socket_free(dev->nl_fd);
-
-	dev->nl_fd = nl_socket_alloc();
 	if (!dev->nl_fd) {
-		DBG("failed to create nl socket: %d/%s", errno,
-						strerror(errno));
-		return FALSE;
+		dev->nl_fd = nl_socket_alloc();
+		if (!dev->nl_fd) {
+			DBG("failed to create nl socket: %d/%s", errno,
+							strerror(errno));
+			return FALSE;
+		}
+
+		if (nl_socket_set_nonblocking(dev->nl_fd)) {
+			DBG("cannot set socket to nonblocking: %d/%s", errno,
+							strerror(errno));
+		}
+
+		if (genl_connect(dev->nl_fd)) {
+			DBG("failed to connect nl socket: %d/%s", errno,
+							strerror(errno));
+			goto err;
+		}
+
+		if (nl_socket_modify_err_cb(dev->nl_fd, NL_CB_CUSTOM, error_cb,
+									NULL)) {
+			DBG("cannot set error callback: %d/%s", errno,
+							strerror(errno));
+			goto err;
+		}
+
+		if (nl_socket_modify_cb(dev->nl_fd, NL_CB_VALID, NL_CB_CUSTOM,
+						get_bitrate_cb, net)) {
+			DBG("cannot set callback: %d/%s", errno,
+							strerror(errno));
+			goto err;
+		}
 	}
 
-	if (nl_socket_set_nonblocking(dev->nl_fd)) {
-		DBG("cannot set socket to nonblocking: %d/%s", errno,
-						strerror(errno));
-	}
-
-	if (genl_connect(dev->nl_fd)) {
-		DBG("failed to connect nl socket: %d/%s", errno,
-						strerror(errno));
-		goto err;
-	}
-
-	dev->nl_id = genl_ctrl_resolve(dev->nl_fd, NL80211);
 	if (dev->nl_id < 0) {
-		DBG("failed to get %s id: %d/%s", NL80211, errno,
-						strerror(errno));
-		goto err;
+		dev->nl_id = genl_ctrl_resolve(dev->nl_fd, NL80211);
+		if (dev->nl_id < 0) {
+			DBG("failed to get %s id: %d/%s", NL80211, errno,
+							strerror(errno));
+			goto err;
+		}
 	}
 
-	if (nl_socket_modify_err_cb(dev->nl_fd, NL_CB_CUSTOM, error_cb, NULL)) {
-		DBG("cannot set error callback: %d/%s", errno, strerror(errno));
-		goto err;
-	}
-
-	if (nl_socket_modify_cb(dev->nl_fd, NL_CB_VALID, NL_CB_CUSTOM,
-					get_bitrate_cb, net)) {
-		DBG("cannot set callback: %d/%s", errno, strerror(errno));
-		goto err;
-	}
-
-	dev->nl_monitor_id = connman_wakeup_timer_add_seconds(
-					NL80211_MAXRATE_TIMEOUT,
-					wifi_monitor_poll, net);
-
-	return TRUE;
+	if (send_nl_msg(net) && recv_nl_msg(net))
+		return TRUE;
 
 err:
 	if (dev->nl_fd) {
@@ -1064,10 +1048,12 @@ err:
 		dev->nl_fd = NULL;
 	}
 
+	dev->nl_id = -1;
+
 	return FALSE;
 }
 
-static void wifi_network_cleanup_nl_maxrate_monitor(struct wifi_network *net)
+static void wifi_network_cleanup_nl_maxrate(struct wifi_network *net)
 {
 	struct wifi_device *dev;
 
@@ -1078,12 +1064,15 @@ static void wifi_network_cleanup_nl_maxrate_monitor(struct wifi_network *net)
 	if (!dev)
 		return;
 
-	DBG("net %p dev %p", net, dev);
+	/*
+	 * Do not cleanup if the network is not the one the device is connected
+	 * to. When the selected network is gone, it will be NULL and cleanup
+	 * can be done.
+	 */
+	if (dev->selected && net != dev->selected)
+		return;
 
-	if (dev->nl_monitor_id) {
-		g_source_remove(dev->nl_monitor_id);
-		dev->nl_monitor_id = 0;
-	}
+	DBG("net %p dev %p", net, dev);
 
 	if (dev->nl_fd) {
 		nl_socket_free(dev->nl_fd);
@@ -1137,11 +1126,6 @@ static void wifi_network_set_state(struct wifi_network *net,
 						net->signalpoll,
 						wifi_network_signalpoll, net);
 			}
-
-			if (!dev->nl_fd) {
-				if (!wifi_network_init_nl_maxrate_monitor(net))
-					DBG("failed to start nl80211 monitor");
-			}
 		} else {
 			if (net->signalpoll) {
 				signalpoll_remove_handler(net->signalpoll,
@@ -1188,7 +1172,7 @@ static void wifi_network_set_state(struct wifi_network *net,
 			break;
 		case WIFI_NETWORK_DISCONNECTING:
 			connman_network_set_connected(net->network, FALSE);
-			wifi_network_cleanup_nl_maxrate_monitor(net);
+			wifi_network_cleanup_nl_maxrate(net);
 			break;
 		}
 	}
@@ -2191,7 +2175,7 @@ static void wifi_network_delete(struct wifi_network *net)
 		g_cancellable_cancel(net->pending);
 		net->pending = NULL;
 	}
-
+	wifi_network_cleanup_nl_maxrate(net);
 	wifi_network_drop_interface(net);
 	signalpoll_remove_handler(net->signalpoll, net->signalpoll_average_id);
 	signalpoll_unref(net->signalpoll);
@@ -4741,6 +4725,7 @@ static struct wifi_device *wifi_device_new(GSupplicant *supplicant,
 		dev->supplicant = gsupplicant_ref(supplicant);
 		dev->device = connman_device_ref(device);
 		dev->autoscan_interval_sec = WIFI_AUTOSCAN_MIN_SEC;
+		dev->nl_id = -1;
 
 		/*
 		 * struct wifi_bss is referenced by either bss_pending or
@@ -5322,15 +5307,19 @@ static int wifi_tech_driver_set_tethering_prepare(
 
 	GASSERT(wifi_plugin->tech == tech);
 
-	if (!is_wmtWiFi(tech))
+	if (!is_wmtWiFi(tech)) {
+		DBG("not wmtWifi");
 		return -ENODEV;
+	}
 
 	/*
 	 * Prevent to send multiple enable sequences. Allow to always send
 	 * disable sequence.
 	 */
-	if (enabled && wifi_plugin->tethering_pending)
+	if (enabled && wifi_plugin->tethering_pending) {
+		DBG("enabled and tethering_pending ");
 		return -EALREADY;
+	}
 
 	err = send_wmtWifi_sequence(tech, enabled);
 	if (err) {
