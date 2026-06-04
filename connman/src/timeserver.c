@@ -516,9 +516,24 @@ int __connman_timeserver_system_set(char **servers)
 
 char **__connman_timeserver_system_get()
 {
+	GSList *list;
 	char **servers;
+	guint len;
+	guint i;
 
-	servers = load_timeservers();
+	list = __connman_timeserver_get_all(connman_service_get_default());
+	if (!list)
+		return NULL;
+
+	len = g_slist_length(list);
+	servers = g_try_new0(char *, len + 1);
+
+	for (i = 0; i < len; i++)
+		servers[i] = g_slist_nth_data(list, i);
+
+	/* Free the list only, the servers are callee's responsibility */
+	g_slist_free(list);
+
 	return servers;
 }
 
