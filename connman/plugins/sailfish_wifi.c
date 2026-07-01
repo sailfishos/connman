@@ -1245,6 +1245,30 @@ static enum connman_network_error wifi_network_error(struct wifi_network *net)
 	return CONNMAN_NETWORK_ERROR_INVALID_KEY;
 }
 
+static bool is_wpa3_invalid_key_state_transition(struct wifi_network *net)
+{
+	GSUPPLICANT_INTERFACE_STATE curr; 
+	GSUPPLICANT_INTERFACE_STATE prev;
+
+	if (!net)
+		return false;
+
+	curr = net->interface_states[0];
+	prev = net->interface_states[1];
+
+	DBG("current state %d prev state %d", curr, prev);
+
+	/*
+	 * With WPA3 authentication error is a state transition from
+	 * authenticating to disconnect. With libgsupplicant the state seems
+	 * to progress one step further to associating. Include both transitions
+	 * in triggering invalid key reply.
+	 */
+	return curr == GSUPPLICANT_INTERFACE_STATE_DISCONNECTED &&
+		(prev == GSUPPLICANT_INTERFACE_STATE_AUTHENTICATING ||
+			prev == GSUPPLICANT_INTERFACE_STATE_ASSOCIATING);
+}
+
 static void wifi_network_interface_disconnected(struct wifi_network *net)
 {
 	/*
@@ -1253,12 +1277,15 @@ static void wifi_network_interface_disconnected(struct wifi_network *net)
 	 *
 	 * PSK: associating -> [associated ->] 4way_handshake -> disconnected
 	 * EAP: associating ->  associated -> disconnected
+	 * WPA3: authenticating|associating -> disconnected
 	 */
 	const GSUPPLICANT_INTERFACE_STATE prev = net->interface_states[1];
+	const GSUPPLICANT_SECURITY security = gsupplicant_bss_security(
+							net->connecting_to);
+
 	if ((prev == GSUPPLICANT_INTERFACE_STATE_4WAY_HANDSHAKE ||
 			prev == GSUPPLICANT_INTERFACE_STATE_ASSOCIATED) &&
-			gsupplicant_bss_security(net->connecting_to) !=
-						GSUPPLICANT_SECURITY_NONE) {
+			security != GSUPPLICANT_SECURITY_NONE) {
 		struct connman_service *service =
 			connman_service_lookup_from_network(net->network);
 		const gboolean user_connect = service &&
@@ -1286,6 +1313,26 @@ static void wifi_network_interface_disconnected(struct wifi_network *net)
 		}
 	} else {
 		net->handshake_retries = 0;
+	}
+
+	switch (security) {
+	case GSUPPLICANT_SECURITY_PSK_SAE:
+	case GSUPPLICANT_SECURITY_SAE:
+		if (net->handshake_retries) {
+			DBG("skip WPA3 key state check, handshake retries %d",
+							net->handshake_retries);
+			break;
+		}
+
+		if (is_wpa3_invalid_key_state_transition(net)) {
+			DBG("invalid key, GSupplicant security %d", security);
+			connman_network_set_error(net->network,
+					CONNMAN_NETWORK_ERROR_INVALID_KEY);
+		}
+
+		break;
+	default:
+		break;
 	}
 
 	/*
