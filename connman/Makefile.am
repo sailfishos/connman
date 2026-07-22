@@ -519,7 +519,7 @@ unit_test_setting_CFLAGS = $(COVERAGE_OPT) $(AM_CFLAGS) \
 				-DDEFAULT_USER_STORAGE=\""$(userstorage)"\"
 unit_test_setting_SOURCES = unit/test-setting.c $(backtrace_sources) \
 				src/connman.h src/log.c src/setting.c \
-				src/config.c
+				src/config.c src/shared/util.c
 unit_test_setting_LDADD = @GLIB_LIBS@ -ldl
 
 TESTS = unit/test-access unit/test-vpn_access unit/test-ippool \
