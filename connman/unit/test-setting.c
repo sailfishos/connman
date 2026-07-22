@@ -29,6 +29,24 @@ int __connman_device_request_scan(enum connman_service_type type)
 	return 0;
 }
 
+enum connman_device_type __connman_device_string2type(const char *str)
+{
+	if (!g_strcmp0(str,"ethernet"))
+		return CONNMAN_DEVICE_TYPE_ETHERNET;
+	if (!g_strcmp0(str,"wifi"))
+		return CONNMAN_DEVICE_TYPE_WIFI;
+	if (!g_strcmp0(str,"bluetooth"))
+		return CONNMAN_DEVICE_TYPE_BLUETOOTH;
+	if (!g_strcmp0(str,"gps"))
+		return CONNMAN_DEVICE_TYPE_GPS;
+	if (!g_strcmp0(str,"cellular"))
+		return CONNMAN_DEVICE_TYPE_CELLULAR;
+	if (!g_strcmp0(str,"gadget"))
+		return CONNMAN_DEVICE_TYPE_GADGET;
+
+	return CONNMAN_DEVICE_TYPE_UNKNOWN;
+}
+
 int __connman_ipconfig_ipv6_set_privacy(struct connman_ipconfig *ipconfig,
 		const char *value)
 {
@@ -187,23 +205,23 @@ enum connman_service_type __connman_service_string2type(const char *str)
 	if (!str)
 		return CONNMAN_SERVICE_TYPE_UNKNOWN;
 
-	if (strncmp(str, "ethernet", 8) == 0)
+	if (!g_strcmp0(str, "ethernet"))
 		return CONNMAN_SERVICE_TYPE_ETHERNET;
-	if (strncmp(str, "gadget", 6) == 0)
+	if (!g_strcmp0(str, "gadget"))
 		return CONNMAN_SERVICE_TYPE_GADGET;
-	if (strncmp(str, "wifi", 4) == 0)
+	if (!g_strcmp0(str, "wifi"))
 		return CONNMAN_SERVICE_TYPE_WIFI;
-	if (strncmp(str, "cellular", 8) == 0)
+	if (!g_strcmp0(str, "cellular"))
 		return CONNMAN_SERVICE_TYPE_CELLULAR;
-	if (strncmp(str, "bluetooth", 9) == 0)
+	if (!g_strcmp0(str, "bluetooth"))
 		return CONNMAN_SERVICE_TYPE_BLUETOOTH;
-	if (strncmp(str, "vpn", 3) == 0)
+	if (!g_strcmp0(str, "vpn"))
 		return CONNMAN_SERVICE_TYPE_VPN;
-	if (strncmp(str, "gps", 3) == 0)
+	if (!g_strcmp0(str, "gps"))
 		return CONNMAN_SERVICE_TYPE_GPS;
-	if (strncmp(str, "system", 6) == 0)
+	if (!g_strcmp0(str, "system"))
 		return CONNMAN_SERVICE_TYPE_SYSTEM;
-	if (strncmp(str, "p2p", 3) == 0)
+	if (!g_strcmp0(str, "p2p"))
 		return CONNMAN_SERVICE_TYPE_P2P;
 
 	return CONNMAN_SERVICE_TYPE_UNKNOWN;
@@ -220,16 +238,6 @@ bool __connman_storage_remove_service(const char *service_id)
 }
 
 int __connman_util_get_random(uint64_t *val)
-{
-	return 0;
-}
-
-bool util_wpa3_is_valid_support_str(const char *str)
-{
-	return true;
-}
-
-int util_wpa3_sae_pwe_index(struct connman_service *service, const char *str)
 {
 	return 0;
 }
@@ -414,7 +422,7 @@ static char *config_ok[] = {
 	"AutoConnectRoamingServices = true",
 	"AddressConflictDetection = true",
 	"UseGatewaysAsTimeservers = true",
-	"FallbackDeviceTypes = rndis0:gadget,usb0:p2p",
+	"FallbackDeviceTypes = rndis0:gadget,usb0:ethernet",
 	"EnableLoginManager = true",
 	"Localtime = /var/local/lib/localtime",
 	"RegdomFollowsTimezone = true",
@@ -570,7 +578,7 @@ static void setting_test_basic0(void)
 	g_assert_cmpstr(__connman_setting_get_fallback_device_type("rndis0"),
 					==, "gadget");
 	g_assert_cmpstr(__connman_setting_get_fallback_device_type("usb0"),
-					==, "p2p");
+					==, "ethernet");
 
 	g_assert_true(connman_setting_get_bool(CONF_ENABLE_LOGIN_MANAGER));
 	g_assert_cmpstr(connman_setting_get_string(CONF_LOCALTIME), ==,
@@ -713,7 +721,7 @@ static void setting_test_basic1(void)
 	g_assert_cmpstr(__connman_setting_get_fallback_device_type("rndis0"),
 					==, "gadget");
 	g_assert_cmpstr(__connman_setting_get_fallback_device_type("usb0"),
-					==, "p2p");
+					==, "ethernet");
 
 	g_assert_true(connman_setting_get_bool("EnableLoginManager"));
 	g_assert_cmpstr(connman_setting_get_string("Localtime"), ==,
@@ -760,7 +768,10 @@ static void setting_test_defaults0(void)
 
 	int_values = connman_setting_get_uint_list(CONF_AUTO_CONNECT_TECHS);
 	g_assert(int_values);
-	g_assert_cmpuint(int_values[0], ==, 0);
+	g_assert_cmpuint(int_values[0], ==, CONNMAN_SERVICE_TYPE_WIFI);
+	g_assert_cmpuint(int_values[1], ==, CONNMAN_SERVICE_TYPE_ETHERNET);
+	g_assert_cmpuint(int_values[2], ==, CONNMAN_SERVICE_TYPE_CELLULAR);
+	g_assert_cmpuint(int_values[3], ==, 0);
 
 	int_values = connman_setting_get_uint_list(CONF_FAVORITE_TECHS);
 	g_assert(int_values);
@@ -780,13 +791,15 @@ static void setting_test_defaults0(void)
 
 	str_list = connman_setting_get_string_list(CONF_BLACKLISTED_INTERFACES);
 	g_assert(str_list);
-	g_assert_cmpuint(g_strv_length(str_list), ==, 6);
+	g_assert_cmpuint(g_strv_length(str_list), ==, 8);
 	g_assert_cmpstr(str_list[0], ==, "vmnet");
 	g_assert_cmpstr(str_list[1], ==, "vboxnet");
 	g_assert_cmpstr(str_list[2], ==, "virbr");
 	g_assert_cmpstr(str_list[3], ==, "ifb");
 	g_assert_cmpstr(str_list[4], ==, "ve-");
 	g_assert_cmpstr(str_list[5], ==, "vb-");
+	g_assert_cmpstr(str_list[6], ==, "ham");
+	g_assert_cmpstr(str_list[7], ==, "veth");
 
 	g_assert_true(connman_setting_get_bool(CONF_ALLOW_HOSTNAME_UPDATES));
 	g_assert_true(connman_setting_get_bool(CONF_ALLOW_DOMAINNAME_UPDATES));
@@ -1134,6 +1147,97 @@ static void setting_test_options2(void)
 	__connman_setting_cleanup();
 }
 
+static char *conf_wifi_ok0[] = {
+	"[General]",
+	"WifiWPA3Support = full",
+	"WifiWPA3SAEPWE = HnP",
+	"WifiWPA3SAECheckMFP = true",
+	"WifiWMTEnableSequence = ABC",
+	"WifiWMTDisableSequence = CBA",
+	"WifiWMTDualMode = true",
+	NULL
+};
+
+static char *conf_wifi_ok1[] = {
+	"[General]",
+	"WifiWPA3Support = mixed",
+	"WifiWPA3SAEPWE = H2E",
+	NULL
+};
+
+static char *conf_wifi_ok2[] = {
+	"[General]",
+	"WifiWPA3Support = none",
+	"WifiWPA3SAEPWE = both",
+};
+
+static char *conf_wifi_invalid0[] = {
+	"[General]",
+	"WifiWPA3Support = nothing",
+	"WifiWPA3SAEPWE = HuntNPeck",
+};
+
+static void setting_test_wifi_options0(void)
+{
+	GKeyFile *config;
+
+	do_init = do_cleanup = false;
+
+	__connman_setting_init();
+
+	/* Load empty config with defaults*/
+	setting_test_defaults0();
+
+	/* Load different WiFi configs as separate ones. */
+	config = load_config_data(conf_wifi_ok0);
+	__connman_setting_read_config_values(config, false, false);
+	g_key_file_unref(config);
+
+	/* Check the OK values */
+	g_assert_cmpstr(connman_setting_get_string("WifiWPA3Support"), ==,
+								"full");
+	g_assert_cmpstr(connman_setting_get_string("WifiWPA3SAEPWE"), ==,
+								"HnP");
+	g_assert_true(connman_setting_get_bool("WifiWPA3SAECheckMFP"));
+	g_assert_cmpstr(connman_setting_get_string("WifiWMTEnableSequence"), ==,
+								"ABC");
+	g_assert_cmpstr(connman_setting_get_string("WifiWMTDisableSequence"),
+							==, "CBA");
+	g_assert_true(connman_setting_get_bool("WifiWMTDualMode"));
+
+	config = load_config_data(conf_wifi_ok1);
+	__connman_setting_read_config_values(config, false, false);
+	g_key_file_unref(config);
+
+	g_assert_cmpstr(connman_setting_get_string("WifiWPA3Support"), ==,
+								"mixed");
+	g_assert_cmpstr(connman_setting_get_string("WifiWPA3SAEPWE"), ==,
+								"H2E");
+
+	config = load_config_data(conf_wifi_ok2);
+	__connman_setting_read_config_values(config, false, false);
+	g_key_file_unref(config);
+
+	g_assert_cmpstr(connman_setting_get_string("WifiWPA3Support"), ==,
+								"none");
+	g_assert_cmpstr(connman_setting_get_string("WifiWPA3SAEPWE"), ==,
+								"both");
+
+	config = load_config_data(conf_wifi_invalid0);
+	__connman_setting_read_config_values(config, false, false);
+	g_key_file_unref(config);
+
+	/* Values do not change or get erased */
+	g_assert_cmpstr(connman_setting_get_string("WifiWPA3Support"), ==,
+								"none");
+	g_assert_cmpstr(connman_setting_get_string("WifiWPA3SAEPWE"), ==,
+								"both");
+
+	__connman_setting_cleanup();
+
+	do_init = do_cleanup = do_main = true;
+}
+
 static void setting_test_error0(void)
 {
 	__connman_setting_init();
@@ -1183,6 +1287,48 @@ static void setting_test_error0(void)
 	__connman_setting_set_option("option", "none");
 
 	__connman_setting_cleanup();
+}
+
+/* TODO add more invalid fields when adding parsers for config options. */
+static char *config_invalid0[] = {
+	"[General]",
+	"TetheringSubnetBlock = a.b.c.d",
+	"DefaultAutoConnectTechnologies = ethernet-wifi",
+	"DefaultFavoriteTechnologies = wifi/cellular",
+	"AlwaysConnectedTechnologies = ethernet_cellular",
+	"PreferredTechnologies = ethernet+wifi",
+	"FallbackNameservers = unknown-url",
+	"StorageRootPermissions = none",
+	"StorageDirPermissions = none",
+	"StorageFilePermissions = none",
+	"Umask = some",
+	"FallbackDeviceTypes = rndis0-gadget,usb0=ethernet",
+	NULL
+};
+
+static void setting_test_error1(void)
+{
+	GKeyFile *config;
+
+	do_init = do_cleanup = false;
+
+	__connman_setting_init();
+
+	/* Load empty config with defaults*/
+	setting_test_defaults0();
+
+	/* Load different WiFi configs as separate ones. */
+	config = load_config_data(config_invalid0);
+	__connman_setting_read_config_values(config, false, false);
+	g_key_file_unref(config);
+
+	/* Test that defaults are not changed */
+	do_load = do_main = false;
+	setting_test_defaults0();
+
+	__connman_setting_cleanup();
+
+	do_init = do_cleanup = do_main = true;
 }
 
 static gchar *option_debug = NULL;
@@ -1243,7 +1389,11 @@ int main (int argc, char *argv[])
 	g_test_add_func("/setting/test_options1", setting_test_options1);
 	g_test_add_func("/setting/test_options2", setting_test_options2);
 
+	g_test_add_func("/setting/test_wifi_options0",
+						setting_test_wifi_options0);
+
 	g_test_add_func("/setting/test_error0", setting_test_error0);
+	g_test_add_func("/setting/test_error1", setting_test_error1);
 
 	err = g_test_run();
 
