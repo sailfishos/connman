@@ -601,23 +601,23 @@ enum connman_service_type __connman_service_string2type(const char *str)
 	if (!str)
 		return CONNMAN_SERVICE_TYPE_UNKNOWN;
 
-	if (strncmp(str, "ethernet", 8) == 0)
+	if (strcmp(str, "ethernet") == 0)
 		return CONNMAN_SERVICE_TYPE_ETHERNET;
-	if (strncmp(str, "gadget", 6) == 0)
+	if (strcmp(str, "gadget") == 0)
 		return CONNMAN_SERVICE_TYPE_GADGET;
-	if (strncmp(str, "wifi", 4) == 0)
+	if (strcmp(str, "wifi") == 0)
 		return CONNMAN_SERVICE_TYPE_WIFI;
-	if (strncmp(str, "cellular", 8) == 0)
+	if (strcmp(str, "cellular") == 0)
 		return CONNMAN_SERVICE_TYPE_CELLULAR;
-	if (strncmp(str, "bluetooth", 9) == 0)
+	if (strcmp(str, "bluetooth") == 0)
 		return CONNMAN_SERVICE_TYPE_BLUETOOTH;
-	if (strncmp(str, "vpn", 3) == 0)
+	if (strcmp(str, "vpn") == 0)
 		return CONNMAN_SERVICE_TYPE_VPN;
-	if (strncmp(str, "gps", 3) == 0)
+	if (strcmp(str, "gps") == 0)
 		return CONNMAN_SERVICE_TYPE_GPS;
-	if (strncmp(str, "system", 6) == 0)
+	if (strcmp(str, "system") == 0)
 		return CONNMAN_SERVICE_TYPE_SYSTEM;
-	if (strncmp(str, "p2p", 3) == 0)
+	if (strcmp(str, "p2p") == 0)
 		return CONNMAN_SERVICE_TYPE_P2P;
 
 	return CONNMAN_SERVICE_TYPE_UNKNOWN;
