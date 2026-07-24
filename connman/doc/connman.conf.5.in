@@ -275,9 +275,40 @@ Defaults to Hnp (0).
 .TP
 Require PMF support with WPA3 SAE key management. false = Do not check PMF for
 SAE (default), true = Limit SAE when PMF is not enabled. This setting can be
-overridden with a per service setting of the same anme and value.
+overridden with a per service setting of the same name and value.
 .TP
 Defaults to false
+.TP
+.BI WifiWMTEnableSequence= string
+.TP
+Sequence of commands to be sent one by one to the WMT WiFi device if ran on an
+system supporting it when enabling tethering. The char string is treated as a
+list of bytes, e.g., ABC will be sent as A, then B and last C. By default this
+is empty and not sent, must be explictly set and works only with sailfish_wifi
+WLAN plugin.
+.TP
+Defaults to NULL.
+.TP
+.BI WifiWMTDisableSequence= string
+.TP
+Sequence of commands to be sent one by one to the WMT WiFi device if ran on an
+system supporting it when disabling tethering. The char string is treated as a
+list of bytes, e.g., CBA will be sent as C, then B and last A. By default this
+is empty and not sent, must be explictly set and works only with sailfish_wifi
+WLAN plugin.
+.TP
+Defaults to NULL.
+.TP
+.BI WifiWMTDualMode= true\ \fR|\fB\ false
+.TP
+Boolean toggle for defining if the WiFi plugin should enable dual mode on a WMT 
+device when tethering is enabled. Dual mode means that the device can remain
+connected to a WLAN network while having an another interface to handle WLAN tethering. With this set to true, the WLAN connection can be tethered to the connected clients as well. In other words, in dual mode the tethering does not
+change - the default service will be used as a route to internet, be it WLAN,
+cellular, ethernet or VPN.
+.TP
+Defaults to false.
+.TP
 .SH "EXAMPLE"
 The following example configuration disables hostname updates and enables
 ethernet tethering.

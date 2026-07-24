@@ -47,8 +47,11 @@
 #define DEFAULT_STORAGE_DIR_PERMISSIONS (0700)
 #define DEFAULT_STORAGE_FILE_PERMISSIONS (0600)
 #define DEFAULT_UMASK (0077)
-#define DEFAULT_LOCALTIME "/etc/localtime"
 
+//#define DEFAULT_ONLINE_CHECK_IPV4_URL "http://ipv4.connman.net/online/status.html"
+//#define DEFAULT_ONLINE_CHECK_IPV6_URL "http://ipv6.connman.net/online/status.html"
+
+//#define DEFAULT_ONLINE_CHECK_CONNECT_TIMEOUT (0 * 1000)
 /*
  * We set the integer to 1 sec so that we have a chance to get
  * necessary IPv6 router advertisement messages that might have
@@ -56,12 +59,31 @@
  */
 #define DEFAULT_ONLINE_CHECK_INITIAL_INTERVAL 1
 #define DEFAULT_ONLINE_CHECK_MAX_INTERVAL 12
+
+//#define DEFAULT_ONLINE_CHECK_FAILURES_THRESHOLD 6
+//#define DEFAULT_ONLINE_CHECK_SUCCESSES_THRESHOLD 6
+
+//#define ONLINE_CHECK_INTERVAL_STYLE_FIBONACCI "fibonacci"
+//#define ONLINE_CHECK_INTERVAL_STYLE_GEOMETRIC "geometric"
+
+//#define DEFAULT_ONLINE_CHECK_INTERVAL_STYLE ONLINE_CHECK_INTERVAL_STYLE_GEOMETRIC
+
+#define DEFAULT_LOCALTIME "/etc/localtime"
+
 #define CONF_STATUS_URL_IPV4_DEF "http://ipv4.connman.net/online/status.html"
 #define CONF_STATUS_URL_IPV6_DEF "http://ipv6.connman.net/online/status.html"
 #define CONF_TETHERING_SUBNET_BLOCK_DEF "192.168.0.0"
-#define CONF_WIFI_DEF "nl80211,wext"
+#define DEFAULT_WIFI_OPTION "nl80211,wext"
 
 static char *default_auto_connect[] = {
+	"wifi",
+	"ethernet",
+	"cellular",
+	NULL
+};
+
+static char *default_enabled_techs[] = {
+	"ethernet",
 	NULL
 };
 
@@ -77,517 +99,120 @@ static char *default_blacklist[] = {
 	"ifb",
 	"ve-",
 	"vb-",
+	"ham",
+	"veth",
 	NULL
 };
 
-static struct {
-	char **fallback_timeservers;
-	char **fallback_nameservers;
-	char **blacklisted_interfaces;
-	char **tethering_technologies;
-	char **dont_bring_down_at_startup;
-	char *ipv6_status_url;
-	char *ipv4_status_url;
-	char *tethering_subnet_block;
-	char *fs_identity;
-	char *storage_root;
-	char *user_storage_dir;
-	char *vendor_class_id;
-	char *localtime;
-	char *wifi_wpa3_support;
-	char *wifi_wpa3_sae_pwe;
-	char *wifi_wmt_enable_sequence;
-	char *wifi_wmt_disable_sequence;
-	unsigned int *auto_connect;
-	unsigned int *favorite_techs;
-	unsigned int *preferred_techs;
-	unsigned int *always_connected_techs;
-	unsigned int timeout_inputreq;
-	unsigned int timeout_browserlaunch;
-	unsigned int online_check_initial_interval;
-	unsigned int online_check_max_interval;
-	bool bg_scan;
-	bool allow_hostname_updates;
-	bool allow_domainname_updates;
-	bool single_tech;
-	bool persistent_tethering_mode;
-	bool enable_6to4;
-	bool enable_online_check;
-	bool enable_online_to_ready_transition;
-	bool auto_connect_roaming_services;
-	bool acd;
-	bool use_gateways_as_timeservers;
-	bool enable_login_manager;
-	bool regdom_follows_timezone;
-	bool default_mdns_configuration;
-	bool tethering_mdns_configuration;
-	bool wifi_wpa3_sae_check_mfp;
-	bool wifi_wmt_dual_mode;
-	mode_t storage_root_permissions;
-	mode_t storage_dir_permissions;
-	mode_t storage_file_permissions;
-	mode_t umask;
-	GHashTable *fallback_device_types;
-	gchar *option_config;
-	gchar *option_debug;
-	gchar *option_device;
-	gchar *option_plugin;
-	gchar *option_nodevice;
-	gchar *option_noplugin;
-	gchar *option_wifi;
-} connman_settings  = { 0 };
-
-enum option_val {
-	CONF_BG_SCAN_VAL = 0,
-	CONF_FALLBACK_TIMESERVERS_VAL,
-	CONF_AUTO_CONNECT_TECHS_VAL,
-	CONF_FAVORITE_TECHS_VAL,
-	CONF_ALWAYS_CONNECTED_TECHS_VAL,
-	CONF_PREFERRED_TECHS_VAL,
-	CONF_FALLBACK_NAMESERVERS_VAL,
-	CONF_TIMEOUT_INPUTREQ_VAL,
-	CONF_TIMEOUT_BROWSERLAUNCH_VAL,
-	CONF_BLACKLISTED_INTERFACES_VAL,
-	CONF_ALLOW_HOSTNAME_UPDATES_VAL,
-	CONF_ALLOW_DOMAINNAME_UPDATES_VAL,
-	CONF_SINGLE_TECH_VAL,
-	CONF_TETHERING_TECHNOLOGIES_VAL,
-	CONF_PERSISTENT_TETHERING_MODE_VAL,
-	CONF_FILE_SYSTEM_IDENTITY_VAL,
-	CONF_STORAGE_ROOT_VAL,
-	CONF_STORAGE_ROOT_PERMISSIONS_VAL,
-	CONF_STORAGE_DIR_PERMISSIONS_VAL,
-	CONF_STORAGE_FILE_PERMISSIONS_VAL,
-	CONF_USER_STORAGE_DIR_VAL,
-	CONF_UMASK_VAL,
-	CONF_STATUS_URL_IPV4_VAL,
-	CONF_STATUS_URL_IPV6_VAL,
-	CONF_TETHERING_SUBNET_BLOCK_VAL,
-	CONF_DONT_BRING_DOWN_AT_STARTUP_VAL,
-	CONF_DISABLE_PLUGINS_VAL,
-	CONF_ENABLE_6TO4_VAL,
-	CONF_VENDOR_CLASS_ID_VAL,
-	CONF_ENABLE_ONLINE_CHECK_VAL,
-	CONF_ENABLE_ONLINE_TO_READY_TRANSITION_VAL,
-	CONF_AUTO_CONNECT_ROAMING_SERVICES_VAL,
-	CONF_ACD_VAL,
-	CONF_USE_GATEWAYS_AS_TIMESERVERS_VAL,
-	CONF_FALLBACK_DEVICE_TYPES_VAL,
-	CONF_ENABLE_LOGIN_MANAGER_VAL,
-	CONF_LOCALTIME_VAL,
-	CONF_REGDOM_FOLLOWS_TIMEZONE_VAL,
-	CONF_DEFAULT_MDNS_CONFIGURATION_VAL,
-	CONF_TETHERING_MDNS_CONFIGURATION_VAL,
-	CONF_ONLINE_CHECK_INITIAL_INTERVAL_VAL,
-	CONF_ONLINE_CHECK_MAX_INTERVAL_VAL,
-	CONF_WIFI_WPA3_SUPPORT_VAL,
-	CONF_WIFI_WPA3_SAE_PWE_VAL,
-	CONF_WIFI_WPA3_SAE_CHECK_MFP_VAL,
-	CONF_WIFI_WMT_ENABLE_SEQUENCE_VAL,
-	CONF_WIFI_WMT_DISABLE_SEQUENCE_VAL,
-	CONF_WIFI_WMT_DUAL_MODE_VAL,
-};
-
 enum option_type {
-	CONF_TYPE_INT = 0,
-	CONF_TYPE_INTARR,
-	CONF_TYPE_CHAR,
-	CONF_TYPE_CHARSTR,
+	CONF_TYPE_UINT = 0,
+	CONF_TYPE_UINTARR,
+	CONF_TYPE_STR,
+	CONF_TYPE_STRARR,
 	CONF_TYPE_BOOL,
-	CONF_TYPE_PERM
+	CONF_TYPE_DOUBLE,
+	CONF_TYPE_HASHTABLE,
+	CONF_TYPE_MODE
 };
 
-struct {
-	const char		*opt_key;
-	enum option_val		opt_value;
-	enum option_type	opt_type;
-} supported_options[] = {
-	{CONF_BG_SCAN,
-					CONF_BG_SCAN_VAL,
-					CONF_TYPE_BOOL},
-	{CONF_FALLBACK_TIMESERVERS,
-					CONF_FALLBACK_TIMESERVERS_VAL,
-					CONF_TYPE_CHARSTR},
-	{CONF_AUTO_CONNECT_TECHS,
-					CONF_AUTO_CONNECT_TECHS_VAL,
-					CONF_TYPE_INTARR},
-	{CONF_FAVORITE_TECHS,
-					CONF_FAVORITE_TECHS_VAL,
-					CONF_TYPE_INTARR},
-	{CONF_ALWAYS_CONNECTED_TECHS,
-					CONF_ALWAYS_CONNECTED_TECHS_VAL,
-					CONF_TYPE_INTARR},
-	{CONF_PREFERRED_TECHS,
-					CONF_PREFERRED_TECHS_VAL,
-					CONF_TYPE_CHARSTR},
-	{CONF_FALLBACK_NAMESERVERS,
-					CONF_FALLBACK_NAMESERVERS_VAL,
-					CONF_TYPE_CHARSTR},
-	{CONF_TIMEOUT_INPUTREQ,
-					CONF_TIMEOUT_INPUTREQ_VAL,
-					CONF_TYPE_INT},
-	{CONF_TIMEOUT_BROWSERLAUNCH,
-					CONF_TIMEOUT_BROWSERLAUNCH_VAL,
-					CONF_TYPE_INT},
-	{CONF_BLACKLISTED_INTERFACES,
-					CONF_BLACKLISTED_INTERFACES_VAL,
-					CONF_TYPE_CHARSTR},
-	{CONF_ALLOW_HOSTNAME_UPDATES,
-					CONF_ALLOW_HOSTNAME_UPDATES_VAL,
-					CONF_TYPE_BOOL},
-	{CONF_ALLOW_DOMAINNAME_UPDATES,
-					CONF_ALLOW_DOMAINNAME_UPDATES_VAL,
-					CONF_TYPE_BOOL},
-	{CONF_SINGLE_TECH,
-					CONF_SINGLE_TECH_VAL,
-					CONF_TYPE_BOOL},
-	{CONF_TETHERING_TECHNOLOGIES,
-					CONF_TETHERING_TECHNOLOGIES_VAL,
-					CONF_TYPE_CHARSTR},
-	{CONF_PERSISTENT_TETHERING_MODE,
-					CONF_PERSISTENT_TETHERING_MODE_VAL,
-					CONF_TYPE_BOOL},
-	{CONF_FILE_SYSTEM_IDENTITY,
-					CONF_FILE_SYSTEM_IDENTITY_VAL,
-					CONF_TYPE_CHAR},
-	{CONF_STORAGE_ROOT,
-					CONF_STORAGE_ROOT_VAL,
-					CONF_TYPE_CHAR},
-	{CONF_STORAGE_ROOT_PERMISSIONS,
-					CONF_STORAGE_ROOT_PERMISSIONS_VAL,
-					CONF_TYPE_PERM},
-	{CONF_STORAGE_DIR_PERMISSIONS,
-					CONF_STORAGE_DIR_PERMISSIONS_VAL,
-					CONF_TYPE_PERM},
-	{CONF_STORAGE_FILE_PERMISSIONS,
-					CONF_STORAGE_FILE_PERMISSIONS_VAL,
-					CONF_TYPE_PERM},
-	{CONF_USER_STORAGE_DIR,
-					CONF_USER_STORAGE_DIR_VAL,
-					CONF_TYPE_CHAR},
-	{CONF_UMASK,
-					CONF_UMASK_VAL,
-					CONF_TYPE_PERM},
-	{CONF_STATUS_URL_IPV4,
-					CONF_STATUS_URL_IPV4_VAL,
-					CONF_TYPE_CHAR},
-	{CONF_STATUS_URL_IPV6,
-					CONF_STATUS_URL_IPV6_VAL,
-					CONF_TYPE_CHAR},
-	{CONF_TETHERING_SUBNET_BLOCK,
-					CONF_TETHERING_SUBNET_BLOCK_VAL,
-					CONF_TYPE_CHAR},
-	{CONF_DONT_BRING_DOWN_AT_STARTUP,
-					CONF_DONT_BRING_DOWN_AT_STARTUP_VAL,
-					CONF_TYPE_BOOL},
-	{CONF_DISABLE_PLUGINS,
-					CONF_DISABLE_PLUGINS_VAL,
-					CONF_TYPE_CHARSTR},
-	{CONF_ENABLE_6TO4,
-					CONF_ENABLE_6TO4_VAL,
-					CONF_TYPE_BOOL},
-	{CONF_VENDOR_CLASS_ID,
-					CONF_VENDOR_CLASS_ID_VAL,
-					CONF_TYPE_CHAR},
-	{CONF_ENABLE_ONLINE_CHECK,
-					CONF_ENABLE_ONLINE_CHECK_VAL,
-					CONF_TYPE_BOOL},
-	{CONF_ENABLE_ONLINE_TO_READY_TRANSITION,
-					CONF_ENABLE_ONLINE_TO_READY_TRANSITION_VAL,
-					CONF_TYPE_BOOL},
-	{CONF_AUTO_CONNECT_ROAMING_SERVICES,
-					CONF_AUTO_CONNECT_ROAMING_SERVICES_VAL,
-					CONF_TYPE_BOOL},
-	{CONF_ACD,
-					CONF_ACD_VAL,
-					CONF_TYPE_BOOL},
-	{CONF_USE_GATEWAYS_AS_TIMESERVERS,
-					CONF_USE_GATEWAYS_AS_TIMESERVERS_VAL,
-					CONF_TYPE_BOOL},
-	{CONF_FALLBACK_DEVICE_TYPES,
-					CONF_FALLBACK_DEVICE_TYPES_VAL,
-					CONF_TYPE_CHAR},
-	{CONF_ENABLE_LOGIN_MANAGER,
-					CONF_ENABLE_LOGIN_MANAGER_VAL,
-					CONF_TYPE_BOOL},
-	{CONF_LOCALTIME,
-					CONF_LOCALTIME_VAL,
-					CONF_TYPE_CHAR},
-	{CONF_REGDOM_FOLLOWS_TIMEZONE,
-					CONF_REGDOM_FOLLOWS_TIMEZONE_VAL,
-					CONF_TYPE_BOOL},
-	{CONF_DEFAULT_MDNS_CONFIGURATION,
-					CONF_DEFAULT_MDNS_CONFIGURATION_VAL,
-					CONF_TYPE_BOOL},
-	{CONF_TETHERING_MDNS_CONFIGURATION,
-					CONF_TETHERING_MDNS_CONFIGURATION_VAL,
-					CONF_TYPE_BOOL},
-	{CONF_ONLINE_CHECK_INITIAL_INTERVAL,
-					CONF_ONLINE_CHECK_INITIAL_INTERVAL_VAL,
-					CONF_TYPE_INT},
-	{CONF_ONLINE_CHECK_MAX_INTERVAL,
-					CONF_ONLINE_CHECK_MAX_INTERVAL_VAL,
-					CONF_TYPE_INT},
-	{CONF_WIFI_WPA3_SUPPORT,
-					CONF_WIFI_WPA3_SUPPORT_VAL,
-					CONF_TYPE_CHAR},
-	{CONF_WIFI_WPA3_SAE_PWE,
-					CONF_WIFI_WPA3_SAE_PWE_VAL,
-					CONF_TYPE_CHAR},
-	{CONF_WIFI_WPA3_SAE_CHECK_MFP,
-					CONF_WIFI_WPA3_SAE_CHECK_MFP_VAL,
-					CONF_TYPE_BOOL},
-	{CONF_WIFI_WMT_ENABLE_SEQUENCE,
-					CONF_WIFI_WMT_ENABLE_SEQUENCE_VAL,
-					CONF_TYPE_CHAR},
-	{CONF_WIFI_WMT_DISABLE_SEQUENCE,
-					CONF_WIFI_WMT_DISABLE_SEQUENCE_VAL,
-					CONF_TYPE_CHAR},
-	{CONF_WIFI_WMT_DUAL_MODE,
-					CONF_WIFI_WMT_DUAL_MODE_VAL,
-					CONF_TYPE_BOOL},
-	{ 0 }
+/* Union for storing the values */
+union config_value {
+	bool bool_val;
+	unsigned int uint_val;
+	double double_val;
+	char *str_val;
+	char **str_array_val;
+	unsigned int *int_array_val;
+	GHashTable *hash_table_val;
+	mode_t mode_val;
 };
 
-const char *connman_setting_get_string(const char *key)
-{
-	if (!key)
-		return NULL;
-
-	if (g_str_equal(key, CONF_VENDOR_CLASS_ID))
-		return connman_settings.vendor_class_id;
-
-	if (g_str_equal(key, CONF_OPTION_CONFIG))
-		return connman_settings.option_config;
-
-	if (g_str_equal(key, CONF_OPTION_DEBUG))
-		return connman_settings.option_debug;
-
-	if (g_str_equal(key, CONF_OPTION_DEVICE))
-		return connman_settings.option_device;
-
-	if (g_str_equal(key, CONF_OPTION_NODEVICE))
-		return connman_settings.option_nodevice;
-
-	if (g_str_equal(key, CONF_OPTION_PLUGIN))
-		return connman_settings.option_plugin;
-
-	/*
-	 * Support both config options for noplugin as this can be defined in
-	 * configuration file as well as on cmd line.
-	 */
-	if (g_str_equal(key, CONF_OPTION_NOPLUGIN) ||
-					g_str_equal(key, CONF_DISABLE_PLUGINS))
-		return connman_settings.option_noplugin;
-
-	if (g_str_equal(key, CONF_OPTION_WIFI)) {
-		if (!connman_settings.option_wifi)
-			return CONF_WIFI_DEF;
-		else
-			return connman_settings.option_wifi;
-	}
-
-	if (g_str_equal(key, CONF_STATUS_URL_IPV4))
-		return connman_settings.ipv4_status_url ?
-			connman_settings.ipv4_status_url :
-			CONF_STATUS_URL_IPV4_DEF;
-
-	if (g_str_equal(key, CONF_STATUS_URL_IPV6))
-		return connman_settings.ipv6_status_url ?
-			connman_settings.ipv6_status_url :
-			CONF_STATUS_URL_IPV6_DEF;
-
-	if (g_str_equal(key, CONF_TETHERING_SUBNET_BLOCK))
-		return connman_settings.tethering_subnet_block ?
-			connman_settings.tethering_subnet_block :
-			CONF_TETHERING_SUBNET_BLOCK_DEF;
-
-	if (g_str_equal(key, CONF_LOCALTIME))
-		return connman_settings.localtime ?
-				connman_settings.localtime : DEFAULT_LOCALTIME;
-
-	if (g_str_equal(key, CONF_FILE_SYSTEM_IDENTITY))
-		return connman_settings.fs_identity;
-
-	if (g_str_equal(key, CONF_STORAGE_ROOT))
-		return connman_settings.storage_root;
-
-	if (g_str_equal(key, CONF_USER_STORAGE_DIR))
-		return connman_settings.user_storage_dir;
-
-	if (g_str_equal(key, CONF_WIFI_WPA3_SUPPORT))
-		return connman_settings.wifi_wpa3_support;
-
-	if (g_str_equal(key, CONF_WIFI_WPA3_SAE_PWE))
-		return connman_settings.wifi_wpa3_sae_pwe;
-
-	if (g_str_equal(key, CONF_WIFI_WMT_ENABLE_SEQUENCE))
-		return connman_settings.wifi_wmt_enable_sequence;
-
-	if (g_str_equal(key, CONF_WIFI_WMT_DISABLE_SEQUENCE))
-		return connman_settings.wifi_wmt_disable_sequence;
-
-	return NULL;
-}
-
-bool connman_setting_get_bool(const char *key)
-{
-	if (!key)
-		return false;
-
-	if (g_str_equal(key, CONF_BG_SCAN))
-		return connman_settings.bg_scan;
-
-	if (g_str_equal(key, CONF_ALLOW_HOSTNAME_UPDATES))
-		return connman_settings.allow_hostname_updates;
-
-	if (g_str_equal(key, CONF_ALLOW_DOMAINNAME_UPDATES))
-		return connman_settings.allow_domainname_updates;
-
-	if (g_str_equal(key, CONF_SINGLE_TECH))
-		return connman_settings.single_tech;
-
-	if (g_str_equal(key, CONF_PERSISTENT_TETHERING_MODE))
-		return connman_settings.persistent_tethering_mode;
-
-	if (g_str_equal(key, CONF_ENABLE_6TO4))
-		return connman_settings.enable_6to4;
-
-	if (g_str_equal(key, CONF_ENABLE_ONLINE_CHECK))
-		return connman_settings.enable_online_check;
-
-	if (g_str_equal(key, CONF_ENABLE_ONLINE_TO_READY_TRANSITION))
-		return connman_settings.enable_online_to_ready_transition;
-
-	if (g_str_equal(key, CONF_AUTO_CONNECT_ROAMING_SERVICES))
-		return connman_settings.auto_connect_roaming_services;
-
-	if (g_str_equal(key, CONF_ACD))
-		return connman_settings.acd;
-
-	if (g_str_equal(key, CONF_USE_GATEWAYS_AS_TIMESERVERS))
-		return connman_settings.use_gateways_as_timeservers;
-
-	if (g_str_equal(key, CONF_ENABLE_LOGIN_MANAGER))
-		return connman_settings.enable_login_manager;
-
-	if (g_str_equal(key, CONF_REGDOM_FOLLOWS_TIMEZONE))
-		return connman_settings.regdom_follows_timezone;
-
-	if (g_str_equal(key, CONF_DEFAULT_MDNS_CONFIGURATION))
-		return connman_settings.default_mdns_configuration;
-
-	if (g_str_equal(key, CONF_TETHERING_MDNS_CONFIGURATION))
-		return connman_settings.tethering_mdns_configuration;
-
-	if (g_str_equal(key, CONF_WIFI_WPA3_SAE_CHECK_MFP))
-		return connman_settings.wifi_wpa3_sae_check_mfp;
-
-	if (g_str_equal(key, CONF_WIFI_WMT_DUAL_MODE))
-		return connman_settings.wifi_wmt_dual_mode;
-
-	return false;
-}
-
-unsigned int connman_setting_get_uint(const char *key)
-{
-	if (!key)
-		return 0;
-
-	if (g_str_equal(key, CONF_ONLINE_CHECK_INITIAL_INTERVAL))
-		return connman_settings.online_check_initial_interval;
-
-	if (g_str_equal(key, CONF_ONLINE_CHECK_MAX_INTERVAL))
-		return connman_settings.online_check_max_interval;
-
-	return 0;
-}
-
-char **connman_setting_get_string_list(const char *key)
-{
-	if (!key)
-		return NULL;
-
-	if (g_str_equal(key, CONF_FALLBACK_TIMESERVERS))
-		return connman_settings.fallback_timeservers;
-
-	if (g_str_equal(key, CONF_FALLBACK_NAMESERVERS))
-		return connman_settings.fallback_nameservers;
-
-	if (g_str_equal(key, CONF_BLACKLISTED_INTERFACES))
-		return connman_settings.blacklisted_interfaces;
-
-	if (g_str_equal(key, CONF_TETHERING_TECHNOLOGIES))
-		return connman_settings.tethering_technologies;
-
-	if (g_str_equal(key, CONF_DONT_BRING_DOWN_AT_STARTUP))
-		return connman_settings.dont_bring_down_at_startup;
-
-	return NULL;
-}
-
-unsigned int *connman_setting_get_uint_list(const char *key)
-{
-	if (!key)
-		return NULL;
-
-	if (g_str_equal(key, CONF_AUTO_CONNECT_TECHS))
-		return connman_settings.auto_connect;
-
-	if (g_str_equal(key, CONF_FAVORITE_TECHS))
-		return connman_settings.favorite_techs;
-
-	if (g_str_equal(key, CONF_PREFERRED_TECHS))
-		return connman_settings.preferred_techs;
-
-	if (g_str_equal(key, CONF_ALWAYS_CONNECTED_TECHS))
-		return connman_settings.always_connected_techs;
-
-	return NULL;
-}
-
-mode_t connman_setting_get_fs_mode(const char *key)
-{
-	if (!key)
-		return 0;
-
-	if (g_str_equal(key, CONF_STORAGE_ROOT_PERMISSIONS))
-		return connman_settings.storage_root_permissions;
-
-	if (g_str_equal(key, CONF_STORAGE_DIR_PERMISSIONS))
-		return connman_settings.storage_dir_permissions;
-
-	if (g_str_equal(key, CONF_STORAGE_FILE_PERMISSIONS))
-		return connman_settings.storage_file_permissions;
-
-	if (g_str_equal(key, CONF_UMASK))
-		return connman_settings.umask;
-
-	return 0;
-}
-
-unsigned int connman_timeout_input_request(void)
-{
-	return connman_settings.timeout_inputreq;
-}
-
-unsigned int connman_timeout_browser_launch(void)
-{
-	return connman_settings.timeout_browserlaunch;
-}
-
-static int conf_key_to_int(const char *key)
-{
-	int i;
-
-	for (i = 0; i < CONF_ARRAY_SIZE(supported_options); i++) {
-		if (!g_strcmp0(key, supported_options[i].opt_key))
-			return supported_options[i].opt_value;
-	}
-
-	return -EINVAL;
-}
-
+/* Callback for checking if value is acceptable */
+typedef gboolean (*parse_str_callback)(const char *value);
+
+/* Callback for parsing items in a string list */
+typedef char** (*parse_list_callback)(char **str_list, gsize *len);
+
+/* Callback for parsing uint list from the NULL terminated string list */
+typedef uint* (*parse_uint_list_callback)(char **list, gsize len);
+
+/* Callback for parsing string list into hashtable. */
+typedef GHashTable* (*parse_hashtable_callback)(char **list, gsize len);
+
+/* Callback for parsing mode_t permission */
+typedef gboolean (*parse_mode_callback)(const char *value, mode_t *perm);
+
+/* Error callback */
+typedef int (*error_callback)(void);
+
+union parse_callback {
+	parse_str_callback parse_str_cb;
+	parse_list_callback parse_list_cb;
+	parse_uint_list_callback parse_uint_list_cb;
+	parse_hashtable_callback parse_hashtable_cb;
+	parse_mode_callback parse_mode_cb;
+};
+
+/*
+ * Configuration options struct.
+ *
+ * Any new configuration option has to have at least key, value and type (and
+ * return type) set. The fields are detailed as follows:
+ *
+ * opt_key		Option name, used for searching in getters
+ * opt_value		enum value for the option
+ * opt_return_type	The type of this option returns, supported: str -> uint
+ 			and strarr -> str
+ * default_val		Default value as union option, must match opt_type
+ * parser		Union for parser callbacks, contains:
+ * 	parse_str_cb		Check string value: CONF_TYPE_STR
+ * 	parse_list_cb		Parse a string list: CONF_TYPE_STRARR
+ * 	parse_uint_list_cb	Parse int list: CONF_TYPE_UINTARR
+ * 	parse_hashtable_cb	Parse a hash table: CONF_TYPE_HASHTABLE
+ * 	parse_mode_cb		Parse mode_t type from a string: CONF_TYPE_MODE
+ * error_cb		Error callback when check_str_cb fails
+ * multiplier		For CONF_TYPE_UINT and CONF_TYPE_DOUBLE correlation
+ *
+ * If parse_str_cb is missing the string is saved as is. If parse_list_strs_cb
+ * is missing the string list is saved as is. If any of the other parser
+ * callbacks is missing the value will not be saved.
+ *
+ * The alternative return type, opt_return_type, can be used to define a
+ * conversion type value for a string. Currently accepted conversions are STR ->
+ * UINT, STR -> STRARR and DOUBLE -> UINT only.
+ *
+ * The error_cb is useful in cases where the value needs a complicated setup.
+ *
+ * The integer multiplier is applied only for INT and DOUBLE values when set.
+ * Keep this 1 for INT/DOUBLE and 0 for everything else.
+ *
+ * The default_val can be used to define the config option default value. All
+ * regular values (BOOL, INT, DOUBLE) will get the value copied to current_val.
+ * STR will get copied only when it is converted to INT at return. Any INTARR,
+ * STRARR or HASHTABLE opt_type needs to be initialized in
+ * initialize_default_values(), and free'd in __connman_settings_cleanup().
+ */
+struct config_option {
+	const char *opt_key;			/* Config option name */
+	enum option_type opt_type;		/* Define valid union field */
+	/* Special handling, read as opt_type, return with this union type */
+	enum option_type opt_return_type;
+
+	/* Unions for default value and current storage */
+	union config_value default_val;
+	union config_value current_val;
+
+	/* Callbacks, parsers are set in union for a type, or NULL if omitted */
+	union parse_callback parser;
+	error_callback error_cb;
+
+	unsigned int multiplier;		/* For integers/doubles*/
+};
+
+/* Global config options hash table */
+static GHashTable *config_options_table = NULL;
+
+/* Parsers for config options. */
 static uint *parse_service_types(char **str_list, gsize len)
 {
 	unsigned int *type_list;
@@ -610,12 +235,17 @@ static uint *parse_service_types(char **str_list, gsize len)
 		i += 1;
 	}
 
+	if (!j) {
+		g_free(type_list);
+		return NULL;
+	}
+
 	type_list[j] = CONNMAN_SERVICE_TYPE_UNKNOWN;
 
 	return type_list;
 }
 
-static char **parse_nameservers(char **nameservers, gsize *len)
+static char **parse_fallback_nameservers(char **nameservers, gsize *len)
 {
 	char **servers;
 	int i, j;
@@ -634,9 +264,26 @@ static char **parse_nameservers(char **nameservers, gsize *len)
 		i += 1;
 	}
 
+	if (!j) {
+		g_strfreev(servers);
+		*len = 0;
+		return NULL;
+	}
+
 	*len = j + 1;
 
 	return servers;
+}
+
+static char **parse_disable_plugins(char **list, gsize *len)
+{
+	int i;
+
+	for (i = 0; i < *len; i++)
+		__connman_setting_set_option(CONF_OPTION_NOPLUGIN, list[i]);
+
+	/* Values are saved into str, list is not saved. */
+	return NULL;
 }
 
 static GHashTable *parse_fallback_device_types(char **devtypes, gsize len)
@@ -653,9 +300,15 @@ static GHashTable *parse_fallback_device_types(char **devtypes, gsize len)
 		if (!v)
 			continue;
 
-		if (v[0] && v[1])
-			g_hash_table_replace(h, g_strdup(v[0]),
-					g_strdup(v[1]));
+		if (v[0] && v[1]) {
+			if (__connman_device_string2type(v[1]) ==
+						CONNMAN_DEVICE_TYPE_UNKNOWN)
+				connman_warn("Invalid FallbackDeviceType in %s",
+								devtypes[i]);
+			else
+				g_hash_table_replace(h, g_strdup(v[0]),
+								g_strdup(v[1]));
+		}
 
 		g_strfreev(v);
 	}
@@ -667,26 +320,33 @@ static GHashTable *parse_fallback_device_types(char **devtypes, gsize len)
 	return NULL;
 }
 
-static gboolean parse_perm(GKeyFile *config, const char *group,
-					const char *key, mode_t *perm)
+static gboolean parse_perm(const char *str, mode_t *perm)
 {
+	char *comment;
+	char *str_copy;
+	unsigned long val;
 	gboolean ok = FALSE;
-	char *str = g_key_file_get_string(config, group, key, NULL);
-	if (str) {
-		/*
-		 * Some people are thinking that # is a comment
-		 * anywhere on the line, not just at the beginning
-		 */
-		unsigned long val;
-		char *comment = strchr(str, '#');
-		if (comment) *comment = 0;
-		val = strtoul(g_strstrip(str), NULL, 0);
-		if (val > 0 && !(val & ~0777UL)) {
-			*perm = (mode_t)val;
-			ok = TRUE;
-		}
-		g_free(str);
+
+	if (!str || !*str)
+		return 0;
+
+	str_copy = g_strdup(str);
+	/*
+	 * Some people are thinking that # is a comment
+	 * anywhere on the line, not just at the beginning
+	 */
+	comment = strchr(str_copy, '#');
+	if (comment)
+		*comment = 0;
+
+	val = strtoul(g_strstrip(str_copy), NULL, 0);
+	if (val > 0 && !(val & ~0777UL)) {
+		*perm = (mode_t)val;
+		ok = TRUE;
 	}
+
+	g_free(str_copy);
+
 	return ok;
 }
 
@@ -703,7 +363,6 @@ static gboolean check_ip(const char *str)
 
 static gboolean check_wpa3_support(const char *str)
 {
-
 	if (!util_wpa3_is_valid_support_str(str)) {
 		connman_warn("invalid \"WifiWPA3Support\" config value \"%s\"",
 			str);
@@ -724,365 +383,1155 @@ static gboolean check_wpa3_sae_pwe(const char *str)
 	return TRUE;
 }
 
-void append_noplugin(const char *value)
+/* Find option by key */
+static struct config_option *config_option_lookup(const char *key)
 {
-	__connman_setting_set_option(CONF_OPTION_NOPLUGIN, value);
+	if (!key || !config_options_table)
+		return NULL;
+
+	return g_hash_table_lookup(config_options_table, key);
 }
 
-typedef gboolean (*str_check_callback) (const char *value);
-typedef char** (*str_list_parse_callback) (char **str_list, gsize *len);
-typedef void (*str_list_callback) (const char *value);
-
-static void set_str(char **ptr, char *value, str_check_callback cb)
+/* Type-safe getters using the union */
+bool connman_setting_get_bool(const char *key)
 {
-	if (*ptr) {
-		g_free(*ptr);
-		*ptr = NULL;
-	}
+	struct config_option *opt;
 
-	if (cb && !cb(value)) {
-		g_free(value);
-		return;
-	}
+	opt = config_option_lookup(key);
+	if (!opt || opt->opt_type != CONF_TYPE_BOOL)
+		return false;
 
-	*ptr = value;
+	return opt->current_val.bool_val;
 }
 
-static void set_str_list(char ***ptr, char **value, gsize len, bool append)
+unsigned int connman_setting_get_uint(const char *key)
 {
-	if (append) {
-		/* TODO */
-		DBG("append is ENOTSUP");
-	}
+	struct config_option *opt;
 
-	if (*ptr)
-		g_strfreev(*ptr);
+	opt = config_option_lookup(key);
+	if (!opt)
+		return 0;
 
-	*ptr = value;
+	if (opt->opt_type != CONF_TYPE_UINT &&
+					opt->opt_return_type != CONF_TYPE_UINT)
+		return 0;
+
+	return opt->current_val.uint_val;
 }
 
-static void set_str_list_cb(char **value, str_list_callback cb, gsize len,
-								bool append)
+const char *connman_setting_get_string(const char *key)
 {
-	int i;
+	struct config_option *opt;
 
-	if (append) {
-		/* TODO */
-		DBG("append is ENOTSUP");
-	}
+	opt = config_option_lookup(key);
+	if (!opt)
+		return NULL;
 
-	for (i = 0; i < len; i++)
-		cb(value[i]);
-}
+	if (opt->opt_type != CONF_TYPE_STR &&
+					opt->opt_return_type != CONF_TYPE_STR)
+		return NULL;
 
-static void set_int_list(unsigned int **ptr, unsigned int *value, bool append)
-{
-	if (append) {
-		/* TODO */
-		DBG("append is ENOTSUP");
-	}
-
-	if (*ptr)
-		g_free(*ptr);
-
-	*ptr = value;
-}
-
-static void set_hash_table(GHashTable **ptr, char **value, gsize len,
-								bool append)
-{
-	if (append) {
-		/* TODO */
-		DBG("append is ENOTSUP");
-	}
-
-	if (*ptr)
-		g_hash_table_destroy(*ptr);
-
-	*ptr = parse_fallback_device_types(value, len);
-}
-
-static void read_config_value(GKeyFile *config, const char *key, bool append)
-{
-	GError *error = NULL;
-	const char *group = "General";
-	char *def_str = NULL;
-	char **def_str_list = NULL;
-	enum option_val key_value;
-	str_check_callback check_cb = NULL;
-	str_list_callback list_cb = NULL;
-	str_list_parse_callback parse_cb = NULL;
-	gsize def_str_list_len = 0;
-	gsize len;
-	unsigned int int_multiplier = 1;
-
-	/* Ptrs for options */
-	GHashTable **hash_table_ptr = NULL;
-	char ***str_list_ptr = NULL;
-	char **str_ptr = NULL;
-	bool *bool_ptr = NULL;
-	unsigned int **int_list_ptr = NULL;
-	unsigned int *int_ptr = NULL;
-	mode_t *mode_ptr = NULL;
-
-	key_value = conf_key_to_int(key);
-
-	/* TODO: use a better structure, like struct with union in htable */
-	switch (key_value) {
-	/* bool */
-	case CONF_BG_SCAN_VAL:
-		bool_ptr = &connman_settings.bg_scan;
-		break;
-	case CONF_ALLOW_HOSTNAME_UPDATES_VAL:
-		bool_ptr = &connman_settings.allow_hostname_updates;
-		break;
-	case CONF_ALLOW_DOMAINNAME_UPDATES_VAL:
-		bool_ptr = &connman_settings.allow_domainname_updates;
-		break;
-	case CONF_SINGLE_TECH_VAL:
-		bool_ptr = &connman_settings.single_tech;
-		break;
-	case CONF_PERSISTENT_TETHERING_MODE_VAL:
-		bool_ptr = &connman_settings.persistent_tethering_mode;
-		break;
-	case CONF_ENABLE_6TO4_VAL:
-		bool_ptr = &connman_settings.enable_6to4;
-		break;
-	case CONF_ENABLE_ONLINE_CHECK_VAL:
-		bool_ptr = &connman_settings.enable_online_check;
-		break;
-	case CONF_ENABLE_ONLINE_TO_READY_TRANSITION_VAL:
-		bool_ptr = &connman_settings.enable_online_to_ready_transition;
-	case CONF_AUTO_CONNECT_ROAMING_SERVICES_VAL:
-		bool_ptr = &connman_settings.auto_connect_roaming_services;
-		break;
-	case CONF_ACD_VAL:
-		bool_ptr = &connman_settings.acd;
-		break;
-	case CONF_USE_GATEWAYS_AS_TIMESERVERS_VAL:
-		bool_ptr = &connman_settings.use_gateways_as_timeservers;
-		break;
-	case CONF_ENABLE_LOGIN_MANAGER_VAL:
-		bool_ptr = &connman_settings.enable_login_manager;
-		break;
-	case CONF_REGDOM_FOLLOWS_TIMEZONE_VAL:
-		bool_ptr = &connman_settings.regdom_follows_timezone;
-		break;
-	case CONF_DEFAULT_MDNS_CONFIGURATION_VAL:
-		bool_ptr = &connman_settings.default_mdns_configuration;
-		break;
-	case CONF_TETHERING_MDNS_CONFIGURATION_VAL:
-		bool_ptr = &connman_settings.tethering_mdns_configuration;
-		break;
-	case CONF_WIFI_WPA3_SAE_CHECK_MFP_VAL:
-		bool_ptr = &connman_settings.wifi_wpa3_sae_check_mfp;
-		break;
-	case CONF_WIFI_WMT_DUAL_MODE_VAL:
-		bool_ptr = &connman_settings.wifi_wmt_dual_mode;
-		break;
-
-	/* str */
-	case CONF_STATUS_URL_IPV4_VAL:
-		str_ptr = &connman_settings.ipv4_status_url;
-		break;
-	case CONF_STATUS_URL_IPV6_VAL:
-		str_ptr = &connman_settings.ipv6_status_url;
-		break;
-	case CONF_TETHERING_SUBNET_BLOCK_VAL:
-		str_ptr = &connman_settings.tethering_subnet_block;
-		check_cb = check_ip;
-		break;
-	case CONF_FILE_SYSTEM_IDENTITY_VAL:
-		str_ptr = &connman_settings.fs_identity;
-		break;
-	case CONF_STORAGE_ROOT_VAL:
-		str_ptr = &connman_settings.storage_root;
-		def_str = DEFAULT_STORAGE_ROOT;
-		break;
-	case CONF_USER_STORAGE_DIR_VAL:
-		str_ptr = &connman_settings.user_storage_dir;
-		def_str = DEFAULT_USER_STORAGE;
-		break;
-	case CONF_VENDOR_CLASS_ID_VAL:
-		str_ptr = &connman_settings.vendor_class_id;
-		break;
-	case CONF_LOCALTIME_VAL:
-		str_ptr = &connman_settings.localtime;
-		break;
-	case CONF_WIFI_WPA3_SUPPORT_VAL:
-		str_ptr = &connman_settings.wifi_wpa3_support;
-		check_cb = check_wpa3_support;
-		break;
-	case CONF_WIFI_WPA3_SAE_PWE_VAL:
-		str_ptr = &connman_settings.wifi_wpa3_sae_pwe;
-		check_cb = check_wpa3_sae_pwe;
-		break;
-	case CONF_WIFI_WMT_ENABLE_SEQUENCE_VAL:
-		str_ptr = &connman_settings.wifi_wmt_enable_sequence;
-		break;
-	case CONF_WIFI_WMT_DISABLE_SEQUENCE_VAL:
-		str_ptr = &connman_settings.wifi_wmt_disable_sequence;
-		break;
-
-	/* str list */
-	case CONF_FALLBACK_TIMESERVERS_VAL:
-		str_list_ptr = &connman_settings.fallback_timeservers;
-		break;
-	case CONF_FALLBACK_NAMESERVERS_VAL:
-		str_list_ptr = &connman_settings.fallback_nameservers;
-		parse_cb = parse_nameservers;
-		break;
-	case CONF_BLACKLISTED_INTERFACES_VAL:
-		str_list_ptr = &connman_settings.blacklisted_interfaces;
-		def_str_list = default_blacklist;
-		def_str_list_len = CONF_ARRAY_SIZE(default_blacklist);
-		break;
-	case CONF_TETHERING_TECHNOLOGIES_VAL:
-		str_list_ptr = &connman_settings.tethering_technologies;
-		break;
-	case CONF_DONT_BRING_DOWN_AT_STARTUP_VAL:
-		str_list_ptr = &connman_settings.dont_bring_down_at_startup;
-		break;
-	/* str list but use append_noplugin */
-	case CONF_DISABLE_PLUGINS_VAL:
-		list_cb = append_noplugin;
-		break;
-
-	/* int */
-	case CONF_TIMEOUT_INPUTREQ_VAL:
-		int_ptr = &connman_settings.timeout_inputreq;
-		int_multiplier = 1000;
-		break;
-	case CONF_TIMEOUT_BROWSERLAUNCH_VAL:
-		int_ptr = &connman_settings.timeout_browserlaunch;
-		int_multiplier = 1000;
-		break;
-	case CONF_ONLINE_CHECK_INITIAL_INTERVAL_VAL:
-		int_ptr = &connman_settings.online_check_initial_interval;
-		break;
-	case CONF_ONLINE_CHECK_MAX_INTERVAL_VAL:
-		int_ptr = &connman_settings.online_check_max_interval;
-		break;
-
-	/* int array */
-	case CONF_AUTO_CONNECT_TECHS_VAL:
-		int_list_ptr = &connman_settings.auto_connect;
-		def_str_list = default_auto_connect;
-		def_str_list_len = CONF_ARRAY_SIZE(default_auto_connect);
-		break;
-	case CONF_FAVORITE_TECHS_VAL:
-		int_list_ptr = &connman_settings.favorite_techs;
-		def_str_list = default_favorite_techs;
-		def_str_list_len = CONF_ARRAY_SIZE(default_favorite_techs);
-		break;
-	case CONF_ALWAYS_CONNECTED_TECHS_VAL:
-		int_list_ptr = &connman_settings.always_connected_techs;
-		break;
-	case CONF_PREFERRED_TECHS_VAL:
-		int_list_ptr = &connman_settings.preferred_techs;
-		break;
-
-	/* GHashTable */
-	case CONF_FALLBACK_DEVICE_TYPES_VAL:
-		hash_table_ptr = &connman_settings.fallback_device_types;
-		break;
-
-	/* mode_t */
-	case CONF_STORAGE_ROOT_PERMISSIONS_VAL:
-		mode_ptr = &connman_settings.storage_root_permissions;
-		break;
-	case CONF_STORAGE_DIR_PERMISSIONS_VAL:
-		mode_ptr = &connman_settings.storage_dir_permissions;
-		break;
-	case CONF_STORAGE_FILE_PERMISSIONS_VAL:
-		mode_ptr = &connman_settings.storage_file_permissions;
-		break;
-	case CONF_UMASK_VAL:
-		mode_ptr = &connman_settings.umask;
-		break;
-
-	default:
-		break;
-	}
-
-	if (bool_ptr) {
-		bool boolean = __connman_config_get_bool(config, group, key,
-						&error);
-		if (!error)
-			*bool_ptr = boolean;
-	}
-
-	if (str_ptr) {
-		char *str = __connman_config_get_string(config, group, key,
-						&error);
-		if (!error)
-			set_str(str_ptr, str, check_cb);
-		/* 
-		 * No value has been set to the str, use default in case of
-		 * error if default is set.
-		 */
-		else if (!*str_ptr && def_str)
-			set_str(str_ptr, g_strdup(def_str), check_cb);
-		else
-			g_free(str);
-	}
-
-	if (str_list_ptr || list_cb) {
-		char **str_list = __connman_config_get_string_list(config,
-						group, key, &len, &error);
-		if (!error) {
-			if (list_cb) {
-				set_str_list_cb(str_list, list_cb, len, append);
-				g_strfreev(str_list);
-			} else if (parse_cb) {
-				char **new_str_list = parse_cb(str_list, &len);
-				g_strfreev(str_list);
-
-				if (new_str_list)
-					set_str_list(str_list_ptr, new_str_list,
-								len, append);
-			} else {
-				set_str_list(str_list_ptr, str_list, len,
-									append);
-			}
-		} else if (str_list_ptr && def_str_list) {
-			set_str_list(str_list_ptr, g_strdupv(def_str_list),
-						def_str_list_len, append);
+	if (opt->current_val.str_val) {
+		return opt->current_val.str_val;
+	} else {
+		/* A hack, disable plugins = config value = noplugin option. */
+		if (!g_strcmp0(key, CONF_DISABLE_PLUGINS)) {
+			const char *str = connman_setting_get_string(
+							CONF_OPTION_NOPLUGIN);
+			if (str)
+				return str;
 		}
 	}
 
-	if (int_ptr) {
-		int value = g_key_file_get_integer(config, group, key, &error);
-		if (!error && value >= 0)
-			*int_ptr = value * int_multiplier;
+	return opt->default_val.str_val;
+}
+
+char **connman_setting_get_string_list(const char *key)
+{
+	struct config_option *opt;
+
+	opt = config_option_lookup(key);
+	if (!opt || opt->opt_type != CONF_TYPE_STRARR)
+		return NULL;
+
+	if (opt->current_val.str_array_val)
+		return opt->current_val.str_array_val;
+
+	return opt->default_val.str_array_val;
+}
+
+unsigned int *connman_setting_get_uint_list(const char *key)
+{
+	struct config_option *opt;
+
+	opt = config_option_lookup(key);
+	if (!opt || opt->opt_type != CONF_TYPE_UINTARR)
+		return NULL;
+
+	if (opt->current_val.int_array_val)
+		return opt->current_val.int_array_val;
+
+	return opt->default_val.int_array_val;
+}
+
+/* Wrappers for input request/browser launch timeout getters */
+unsigned int connman_timeout_input_request(void)
+{
+	return connman_setting_get_uint(CONF_TIMEOUT_INPUTREQ);
+}
+
+unsigned int connman_timeout_browser_launch(void)
+{
+	return connman_setting_get_uint(CONF_TIMEOUT_BROWSERLAUNCH);
+}
+
+mode_t connman_setting_get_fs_mode(const char *key)
+{
+	struct config_option *opt;
+
+	if (!key)
+		return 0;
+
+	opt = config_option_lookup(key);
+	if (!opt || opt->opt_type != CONF_TYPE_MODE)
+		return 0;
+
+	if (opt->current_val.mode_val)
+		return opt->current_val.mode_val;
+
+	return opt->default_val.mode_val;
+}
+
+/* Type-safe value setters */
+static void set_bool_value(struct config_option *opt, bool value)
+{
+	if (opt->opt_type != CONF_TYPE_BOOL)
+		return;
+
+	opt->current_val.bool_val = value;
+}
+
+static void set_uint_value(struct config_option *opt, unsigned int value)
+{
+	if (opt->opt_type != CONF_TYPE_UINT &&
+					opt->opt_return_type != CONF_TYPE_UINT)
+		return;
+
+	opt->current_val.uint_val = value;
+}
+
+static void set_str_value(struct config_option *opt, const char *value)
+{
+	if (opt->opt_type != CONF_TYPE_STR &&
+					opt->opt_return_type != CONF_TYPE_STR)
+		return;
+
+	if (opt->parser.parse_str_cb && !opt->parser.parse_str_cb(value))
+		return;
+
+	if (!g_strcmp0(opt->current_val.str_val, value))
+		return;
+
+	g_free(opt->current_val.str_val);
+	opt->current_val.str_val = g_strdup(value);
+}
+
+static void set_str_array_value(struct config_option *opt, char **value)
+{
+	if (opt->opt_type != CONF_TYPE_STRARR)
+		return;
+
+	g_strfreev(opt->current_val.str_array_val);
+	opt->current_val.str_array_val = g_strdupv(value);
+}
+
+static void set_int_array_value(struct config_option *opt, unsigned int *value)
+{
+	if (opt->opt_type != CONF_TYPE_UINTARR)
+		return;
+
+	g_free(opt->current_val.int_array_val);
+	opt->current_val.int_array_val = value;
+}
+
+static void set_hash_table_value(struct config_option *opt, GHashTable *value)
+{
+	if (opt->opt_type != CONF_TYPE_HASHTABLE)
+		return;
+
+	if (opt->current_val.hash_table_val)
+		g_hash_table_destroy(opt->current_val.hash_table_val);
+
+	opt->current_val.hash_table_val = value;
+}
+
+static void set_mode_value(struct config_option *opt, mode_t perm)
+{
+	if (opt->opt_type != CONF_TYPE_MODE)
+		return;
+
+	opt->current_val.mode_val = perm;
+}
+
+/* Internal helper-wrappers */
+/*static int setting_set_bool(const char *key, bool value)
+{
+	struct config_option *opt;
+
+	opt = config_option_lookup(key);
+	if (!opt)
+		return -EINVAL;
+
+	set_bool_value(opt, value);
+
+	return 0;
+}*/
+
+static int setting_set_uint(const char *key, unsigned int value)
+{
+	struct config_option *opt;
+
+	opt = config_option_lookup(key);
+	if (!opt)
+		return -EINVAL;
+
+	set_uint_value(opt, value);
+
+	return 0;
+}
+
+/* Public setters for internal use */
+void __connman_setting_set_option(const char *key, const char *value)
+{
+	struct config_option *opt;
+	char *new_value = NULL;
+	const char *prev;
+
+	if (!key)
+		return;
+
+	opt = config_option_lookup(key);
+	if (!opt)
+		return;
+
+	if (g_str_equal(key, CONF_OPTION_PLUGIN) ||
+				g_str_equal(key, CONF_OPTION_NOPLUGIN)) {
+		prev = connman_setting_get_string(key);
+		if (prev)
+			new_value = g_strconcat(prev, ",", value, NULL);
+	} else if (g_str_equal(key, CONF_OPTION_CONFIG)) {
+		if (!g_str_has_suffix(value, ".conf")) {
+			connman_warn("invalid config %s", value);
+			return;
+		}
+	} else if (g_str_equal(key, CONF_OPTION_DEBUG)) {
+		if (value) {
+			prev = connman_setting_get_string(key);
+			if (prev && g_strcmp0(prev, "*"))
+				new_value = g_strconcat(prev, ",", value, NULL);
+		} else {
+			new_value = g_strdup("*");
+		}
+	} else if (g_str_equal(key, CONF_OPTION_DEVICE)) {
+		// no-op
+	} else if (g_str_equal(key, CONF_OPTION_NODEVICE)) {
+		// no-op
+	} else if (g_str_equal(key, CONF_OPTION_WIFI)) {
+		// no-op
+	} else {
+		connman_warn("invalid option key %s value %s", key, value);
+		return;
 	}
 
-	if (int_list_ptr) {
-		char **str_list = __connman_config_get_string_list(config,
-						group, key, &len, &error);
-		if (!error)
-			set_int_list(int_list_ptr,
-					parse_service_types(str_list, len),
-					append);
-		else if (def_str_list)
-			set_int_list(int_list_ptr,
-					parse_service_types(def_str_list,
-						def_str_list_len),
-					append);
-		g_strfreev(str_list);
+	set_str_value(opt, new_value ? new_value : value);
+	g_free(new_value);
+}
+
+/* Online mode checking functions */
+/*static int online_check_connect_timeout_error(void)
+{
+	connman_warn("Incorrect online check connect timeout");
+
+	return setting_set_uint(CONF_ONLINE_CHECK_CONNECT_TIMEOUT,
+					DEFAULT_ONLINE_CHECK_CONNECT_TIMEOUT);
+}
+
+static int online_check_mode_set_from_deprecated(void)
+{
+	bool enable_online_check;
+	bool enable_online_to_ready_transition;
+
+	enable_online_check = connman_setting_get_bool(
+					CONF_ENABLE_ONLINE_CHECK);
+	enable_online_to_ready_transition = connman_setting_get_bool(
+					CONF_ENABLE_ONLINE_TO_READY_TRANSITION);
+
+	return setting_set_uint(CONF_ONLINE_CHECK_MODE,
+		enable_online_check ?
+			enable_online_to_ready_transition ?
+				CONNMAN_SERVICE_ONLINE_CHECK_MODE_CONTINUOUS :
+				CONNMAN_SERVICE_ONLINE_CHECK_MODE_ONE_SHOT :
+		CONNMAN_SERVICE_ONLINE_CHECK_MODE_NONE);
+}
+
+static void online_check_mode_set_to_deprecated(void)
+{
+	bool enable_online_check;
+	bool enable_online_to_ready_transition;
+
+	switch (connman_setting_get_uint(CONF_ONLINE_CHECK_MODE)) {
+	case CONNMAN_SERVICE_ONLINE_CHECK_MODE_NONE:
+		enable_online_check = false;
+		enable_online_to_ready_transition = false;
+		break;
+	case CONNMAN_SERVICE_ONLINE_CHECK_MODE_ONE_SHOT:
+		enable_online_check = true;
+		enable_online_to_ready_transition = false;
+		break;
+	case CONNMAN_SERVICE_ONLINE_CHECK_MODE_CONTINUOUS:
+		enable_online_check = true;
+		enable_online_to_ready_transition = true;
+		break;
+	default:
+		return;
 	}
 
-	if (hash_table_ptr) {
-		char **str_list = __connman_config_get_string_list(config,
-						group, key, &len, &error);
-		if (!error)
-			set_hash_table(hash_table_ptr, str_list, len, append);
+	setting_set_bool(CONF_ENABLE_ONLINE_CHECK,
+					enable_online_check);
+	setting_set_bool(CONF_ENABLE_ONLINE_TO_READY_TRANSITION,
+					enable_online_to_ready_transition);
+}
 
-		g_strfreev(str_list);
+static gboolean check_online_mode(const char *str)
+{
+	enum service_online_check_mode online_check_mode =
+			__connman_service_online_check_string2mode(str);
+
+	setting_set_uint(CONF_ONLINE_CHECK_MODE, online_check_mode);
+
+	if (online_check_mode == CONNMAN_SERVICE_ONLINE_CHECK_MODE_UNKNOWN) {
+		connman_error("Invalid online check mode \"%s\"", str);
+
+		online_check_mode_set_from_deprecated();
+	} else {
+		online_check_mode_set_to_deprecated();
 	}
 
-	if (mode_ptr) {
-		parse_perm(config, group, key, mode_ptr);
+	return false;
+}
+
+static gboolean check_online_check_interval_style(const char *str)
+{
+	if ((g_strcmp0(str, ONLINE_CHECK_INTERVAL_STYLE_FIBONACCI) == 0) ||
+		(g_strcmp0(str, ONLINE_CHECK_INTERVAL_STYLE_GEOMETRIC) == 0)) {
+		return true;
+	} else {
+		connman_warn("Incorrect online check interval style [%s]", str);
+		return false;
+	}
+}
+
+static void online_check_settings_log(void)
+{
+	if (!connman_setting_get_string(CONF_ONLINE_CHECK_MODE))
+		connman_info("Online check disabled by config");
+	else
+		connman_info("Online check mode \"%s\"",
+				__connman_service_online_check_mode2string(
+					connman_setting_get_uint(
+						CONF_ONLINE_CHECK_MODE)));
+
+	if (connman_setting_get_uint(CONF_ONLINE_CHECK_MODE) ==
+			CONNMAN_SERVICE_ONLINE_CHECK_MODE_NONE)
+		return;
+
+	connman_info("Online check IPv4 URL \"%s\"",
+		connman_setting_get_string(CONF_ONLINE_CHECK_IPV4_URL));
+
+	connman_info("Online check IPv6 URL \"%s\"",
+		connman_setting_get_string(CONF_ONLINE_CHECK_IPV6_URL));
+
+	connman_info("Online check interval style \"%s\"",
+		connman_setting_get_string(CONF_ONLINE_CHECK_INTERVAL_STYLE));
+
+	connman_info("Online check interval range [%u, %u]",
+		connman_setting_get_uint(CONF_ONLINE_CHECK_INITIAL_INTERVAL),
+		connman_setting_get_uint(CONF_ONLINE_CHECK_MAX_INTERVAL));
+
+	if (connman_setting_get_uint(CONF_ONLINE_CHECK_CONNECT_TIMEOUT))
+		connman_info("Online check connect timeout %u ms",
+			connman_setting_get_uint(
+				CONF_ONLINE_CHECK_CONNECT_TIMEOUT));
+
+	if (connman_setting_get_uint(CONF_ONLINE_CHECK_MODE) !=
+			CONNMAN_SERVICE_ONLINE_CHECK_MODE_CONTINUOUS)
+		return;
+
+	connman_info("Online check continuous mode failures threshold %d",
+			connman_setting_get_uint(
+				CONF_ONLINE_CHECK_FAILURES_THRESHOLD));
+
+	connman_info("Online check continuous mode successes threshold %d",
+			connman_setting_get_uint(
+				CONF_ONLINE_CHECK_SUCCESSES_THRESHOLD));
+}*/
+
+static struct config_option config_options[] = {
+	/* BackgroundScanning */
+	{
+		.opt_key = CONF_BG_SCAN,
+		.opt_type = CONF_TYPE_BOOL,
+		.opt_return_type = CONF_TYPE_BOOL,
+		.default_val.bool_val = true,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* FallbackTimeservers */
+	{
+		.opt_key = CONF_PREF_TIMESERVERS,
+		.opt_type = CONF_TYPE_STRARR,
+		.opt_return_type = CONF_TYPE_STRARR,
+		.default_val.str_array_val = NULL,
+		.parser.parse_list_cb = NULL,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* DefaultAutoConnectTechnologies */
+	{
+		.opt_key = CONF_AUTO_CONNECT_TECHS,
+		.opt_type = CONF_TYPE_UINTARR,
+		.opt_return_type = CONF_TYPE_UINTARR,
+		.default_val.int_array_val = NULL,
+		.parser.parse_uint_list_cb = parse_service_types,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* DefaultEnabledTechnologies */
+	{
+		.opt_key = CONF_ENABLED_TECHS,
+		.opt_type = CONF_TYPE_UINTARR,
+		.opt_return_type = CONF_TYPE_UINTARR,
+		.default_val.int_array_val = NULL,
+		.parser.parse_uint_list_cb = parse_service_types,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* DefaultFavoriteTechnologies */
+	{
+		.opt_key = CONF_FAVORITE_TECHS,
+		.opt_type = CONF_TYPE_UINTARR,
+		.opt_return_type = CONF_TYPE_UINTARR,
+		.default_val.int_array_val = NULL,
+		.parser.parse_uint_list_cb = parse_service_types,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* AlwaysConnectedTechnologies */
+	{
+		.opt_key = CONF_ALWAYS_CONNECTED_TECHS,
+		.opt_type = CONF_TYPE_UINTARR,
+		.opt_return_type = CONF_TYPE_UINTARR,
+		.default_val.int_array_val = NULL,
+		.parser.parse_uint_list_cb = parse_service_types,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* PreferredTechnologies */
+	{
+		.opt_key = CONF_PREFERRED_TECHS,
+		.opt_type = CONF_TYPE_UINTARR,
+		.opt_return_type = CONF_TYPE_UINTARR,
+		.default_val.int_array_val = NULL,
+		.parser.parse_uint_list_cb = parse_service_types,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* FallbackNameservers */
+	{
+		.opt_key = CONF_FALLBACK_NAMESERVERS,
+		.opt_type = CONF_TYPE_STRARR,
+		.opt_return_type = CONF_TYPE_STRARR,
+		.default_val.str_array_val = NULL,
+		.parser.parse_list_cb = parse_fallback_nameservers,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* InputRequestTimeout */
+	{
+		.opt_key = CONF_TIMEOUT_INPUTREQ,
+		.opt_type = CONF_TYPE_UINT,
+		.opt_return_type = CONF_TYPE_UINT,
+		.default_val.uint_val = DEFAULT_INPUT_REQUEST_TIMEOUT,
+		.error_cb = NULL,
+		.multiplier = 1000
+	},
+	/* BrowserLaunchTimeout */
+	{
+		.opt_key = CONF_TIMEOUT_BROWSERLAUNCH,
+		.opt_type = CONF_TYPE_UINT,
+		.opt_return_type = CONF_TYPE_UINT,
+		.default_val.uint_val = DEFAULT_BROWSER_LAUNCH_TIMEOUT,
+		.error_cb = NULL,
+		.multiplier = 1000
+	},
+	/* NetworkInterfaceBlacklist */
+	{
+		.opt_key = CONF_BLACKLISTED_INTERFACES,
+		.opt_type = CONF_TYPE_STRARR,
+		.opt_return_type = CONF_TYPE_STRARR,
+		.default_val.str_array_val = NULL,
+		.parser.parse_list_cb = NULL,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* AllowHostnameUpdates */
+	{
+		.opt_key = CONF_ALLOW_HOSTNAME_UPDATES,
+		.opt_type = CONF_TYPE_BOOL,
+		.opt_return_type = CONF_TYPE_BOOL,
+		.default_val.bool_val = true,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* AllowDomainnameUpdates */
+	{
+		.opt_key = CONF_ALLOW_DOMAINNAME_UPDATES,
+		.opt_type = CONF_TYPE_BOOL,
+		.opt_return_type = CONF_TYPE_BOOL,
+		.default_val.bool_val = true,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* SingleConnectedTechnology */
+	{
+		.opt_key = CONF_SINGLE_TECH,
+		.opt_type = CONF_TYPE_BOOL,
+		.opt_return_type = CONF_TYPE_BOOL,
+		.default_val.bool_val = false,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* TetheringTechnologies */
+	{
+		.opt_key = CONF_TETHERING_TECHNOLOGIES,
+		.opt_type = CONF_TYPE_STRARR,
+		.opt_return_type = CONF_TYPE_STRARR,
+		.default_val.str_array_val = NULL,
+		.parser.parse_list_cb = NULL,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* PersistentTetheringMode */
+	{
+		.opt_key = CONF_PERSISTENT_TETHERING_MODE,
+		.opt_type = CONF_TYPE_BOOL,
+		.opt_return_type = CONF_TYPE_BOOL,
+		.default_val.bool_val = false,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* Enable6to4 */
+	{
+		.opt_key = CONF_ENABLE_6TO4,
+		.opt_type = CONF_TYPE_BOOL,
+		.opt_return_type = CONF_TYPE_BOOL,
+		.default_val.bool_val = false,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* VendorClassID */
+	{
+		.opt_key = CONF_VENDOR_CLASS_ID,
+		.opt_type = CONF_TYPE_STR,
+		.opt_return_type = CONF_TYPE_STR,
+		.default_val.str_val = NULL,
+		.parser.parse_str_cb = NULL,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* EnableOnlineCheck */
+	{
+		.opt_key = CONF_ENABLE_ONLINE_CHECK,
+		.opt_type = CONF_TYPE_BOOL,
+		.opt_return_type = CONF_TYPE_BOOL,
+		.default_val.bool_val = true,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* EnableOnlineToReadyTransition */
+	{
+		.opt_key = CONF_ENABLE_ONLINE_TO_READY_TRANSITION,
+		.opt_type = CONF_TYPE_BOOL,
+		.opt_return_type = CONF_TYPE_BOOL,
+		.default_val.bool_val = false,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* OnlineCheckMode */
+/*	{
+		.opt_key = CONF_ONLINE_CHECK_MODE,
+		.opt_type = CONF_TYPE_STR,
+		.opt_return_type = CONF_TYPE_UINT,
+		.default_val.uint_val =
+				CONNMAN_SERVICE_ONLINE_CHECK_MODE_ONE_SHOT,
+		.parser.parse_str_cb = check_online_mode,
+		.error_cb = online_check_mode_set_from_deprecated,
+		.multiplier = 0
+	},*/
+	/* OnlineCheckIPv4URL */
+	/*{
+		.opt_key = CONF_ONLINE_CHECK_IPV4_URL,
+		.opt_type = CONF_TYPE_STR,
+		.opt_return_type = CONF_TYPE_STR,
+		.default_val.str_val = DEFAULT_ONLINE_CHECK_IPV4_URL,
+		.parser.parse_str_cb = NULL,
+		.error_cb = NULL,
+		.multiplier = 0
+	},*/
+	/* OnlineCheckIPv6URL */
+	/*{
+		.opt_key = CONF_ONLINE_CHECK_IPV6_URL,
+		.opt_type = CONF_TYPE_STR,
+		.opt_return_type = CONF_TYPE_STR,
+		.default_val.str_val = DEFAULT_ONLINE_CHECK_IPV6_URL,
+		.parser.parse_str_cb = NULL,
+		.error_cb = NULL,
+		.multiplier = 0
+	},*/
+	/* OnlineCheckConnectTimeout */
+	/*{
+		.opt_key = CONF_ONLINE_CHECK_CONNECT_TIMEOUT,
+		.opt_type = CONF_TYPE_DOUBLE,
+		.opt_return_type = CONF_TYPE_UINT,
+		.default_val.double_val = DEFAULT_ONLINE_CHECK_CONNECT_TIMEOUT,
+		.error_cb = online_check_connect_timeout_error,
+		.multiplier = 1000
+	},*/
+	/* OnlineCheckInitialInterval */
+	{
+		.opt_key = CONF_ONLINE_CHECK_INITIAL_INTERVAL,
+		.opt_type = CONF_TYPE_UINT,
+		.opt_return_type = CONF_TYPE_UINT,
+		.default_val.uint_val = DEFAULT_ONLINE_CHECK_INITIAL_INTERVAL,
+		.error_cb = NULL,
+		.multiplier = 1
+	},
+	/* OnlineCheckMaxInterval */
+	{
+		.opt_key = CONF_ONLINE_CHECK_MAX_INTERVAL,
+		.opt_type = CONF_TYPE_UINT,
+		.opt_return_type = CONF_TYPE_UINT,
+		.default_val.uint_val = DEFAULT_ONLINE_CHECK_MAX_INTERVAL,
+		.error_cb = NULL,
+		.multiplier = 1
+	},
+	/* OnlineCheckFailuresThreshold */
+	/*{
+		.opt_key = CONF_ONLINE_CHECK_FAILURES_THRESHOLD,
+		.opt_type = CONF_TYPE_UINT,
+		.opt_return_type = CONF_TYPE_UINT,
+		.default_val.uint_val = DEFAULT_ONLINE_CHECK_FAILURES_THRESHOLD,
+		.error_cb = NULL,
+		.multiplier = 1
+	},*/
+	/* OnlineCheckSuccessesThreshold */
+	/*{
+		.opt_key = CONF_ONLINE_CHECK_SUCCESSES_THRESHOLD,
+		.opt_type = CONF_TYPE_UINT,
+		.opt_return_type = CONF_TYPE_UINT,
+		.default_val.uint_val = DEFAULT_ONLINE_CHECK_SUCCESSES_THRESHOLD,
+		.error_cb = NULL,
+		.multiplier = 1
+	},*/
+	/* OnlineCheckIntervalStyle */
+/*	{
+		.opt_key = CONF_ONLINE_CHECK_INTERVAL_STYLE,
+		.opt_type = CONF_TYPE_STR,
+		.opt_return_type = CONF_TYPE_STR,
+		.default_val.str_val = DEFAULT_ONLINE_CHECK_INTERVAL_STYLE,
+		.parser.parse_str_cb = check_online_check_interval_style,
+		.error_cb = NULL,
+		.multiplier = 0
+	},*/
+	/* AutoConnectRoamingServices */
+	{
+		.opt_key = CONF_AUTO_CONNECT_ROAMING_SERVICES,
+		.opt_type = CONF_TYPE_BOOL,
+		.opt_return_type = CONF_TYPE_BOOL,
+		.default_val.bool_val = false,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* AddressConflictDetection */
+	{
+		.opt_key = CONF_ACD,
+		.opt_type = CONF_TYPE_BOOL,
+		.opt_return_type = CONF_TYPE_BOOL,
+		.default_val.bool_val = false,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* UseGatewaysAsTimeservers */
+	{
+		.opt_key = CONF_USE_GATEWAYS_AS_TIMESERVERS,
+		.opt_type = CONF_TYPE_BOOL,
+		.opt_return_type = CONF_TYPE_BOOL,
+		.default_val.bool_val = false,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* Localtime */
+	{
+		.opt_key = CONF_LOCALTIME,
+		.opt_type = CONF_TYPE_STR,
+		.opt_return_type = CONF_TYPE_STR,
+		.default_val.str_val = DEFAULT_LOCALTIME,
+		.parser.parse_str_cb = NULL,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* RegdomFollowsTimezone */
+	{
+		.opt_key = CONF_REGDOM_FOLLOWS_TIMEZONE,
+		.opt_type = CONF_TYPE_BOOL,
+		.opt_return_type = CONF_TYPE_BOOL,
+		.default_val.bool_val = false,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* ResolvConf */
+	{
+		.opt_key = CONF_RESOLV_CONF,
+		.opt_type = CONF_TYPE_STR,
+		.opt_return_type = CONF_TYPE_STR,
+		.default_val.str_val = NULL,
+		.parser.parse_str_cb = NULL,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* FallbackDeviceTypes */
+	{
+		.opt_key = CONF_FALLBACK_DEVICE_TYPES,
+		.opt_type = CONF_TYPE_HASHTABLE,
+		.opt_return_type = CONF_TYPE_HASHTABLE,
+		.default_val.hash_table_val = NULL,
+		.parser.parse_hashtable_cb = parse_fallback_device_types,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* Option "wifi" */
+	{
+		.opt_key = CONF_OPTION_WIFI,
+		.opt_type = CONF_TYPE_STR,
+		.opt_return_type = CONF_TYPE_STR,
+		.default_val.str_val = DEFAULT_WIFI_OPTION,
+		.parser.parse_str_cb = NULL,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* Ipv4StatusUrl */
+	{
+		.opt_key = CONF_STATUS_URL_IPV4,
+		.opt_type = CONF_TYPE_STR,
+		.opt_return_type = CONF_TYPE_STR,
+		.default_val.str_val = CONF_STATUS_URL_IPV4_DEF,
+		.parser.parse_str_cb = NULL,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* Ipv6StatusUrl */
+	{
+		.opt_key = CONF_STATUS_URL_IPV6,
+		.opt_type = CONF_TYPE_STR,
+		.opt_return_type = CONF_TYPE_STR,
+		.default_val.str_val = CONF_STATUS_URL_IPV6_DEF,
+		.parser.parse_str_cb = NULL,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* "TetheringSubnetBlock" */
+	{
+		.opt_key = CONF_TETHERING_SUBNET_BLOCK,
+		.opt_type = CONF_TYPE_STR,
+		.opt_return_type = CONF_TYPE_STR,
+		.default_val.str_val = CONF_TETHERING_SUBNET_BLOCK_DEF,
+		.parser.parse_str_cb = check_ip,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* "FileSystemIdentity" */
+	{
+		.opt_key = CONF_FILE_SYSTEM_IDENTITY,
+		.opt_type = CONF_TYPE_STR,
+		.opt_return_type = CONF_TYPE_STR,
+		.default_val.str_val = NULL,
+		.parser.parse_str_cb = NULL,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* "StorageRoot" */
+	{
+		.opt_key = CONF_STORAGE_ROOT,
+		.opt_type = CONF_TYPE_STR,
+		.opt_return_type = CONF_TYPE_STR,
+		.default_val.str_val = DEFAULT_STORAGE_ROOT,
+		.parser.parse_str_cb = NULL,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* "UserStorage" */
+	{
+		.opt_key = CONF_USER_STORAGE_DIR,
+		.opt_type = CONF_TYPE_STR,
+		.opt_return_type = CONF_TYPE_STR,
+		.default_val.str_val = DEFAULT_USER_STORAGE,
+		.parser.parse_str_cb = NULL,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* "DontBringDownAtStartup" */
+	{
+		.opt_key = CONF_DONT_BRING_DOWN_AT_STARTUP,
+		.opt_type = CONF_TYPE_STRARR,
+		.opt_return_type = CONF_TYPE_STRARR,
+		.default_val.str_val = NULL,
+		.parser.parse_list_cb = NULL,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* "StorageRootPermissions" */
+	{
+		.opt_key = CONF_STORAGE_ROOT_PERMISSIONS,
+		.opt_type = CONF_TYPE_MODE,
+		.opt_return_type = CONF_TYPE_MODE,
+		.default_val.mode_val = DEFAULT_STOGAGE_ROOT_PERMISSIONS,
+		.parser.parse_mode_cb = parse_perm,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* "StorageDirPermissions" */
+	{
+		.opt_key = CONF_STORAGE_DIR_PERMISSIONS,
+		.opt_type = CONF_TYPE_MODE,
+		.opt_return_type = CONF_TYPE_MODE,
+		.default_val.mode_val = DEFAULT_STORAGE_DIR_PERMISSIONS,
+		.parser.parse_mode_cb = parse_perm,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* "StorageFilePermissions" */
+	{
+		.opt_key = CONF_STORAGE_FILE_PERMISSIONS,
+		.opt_type = CONF_TYPE_MODE,
+		.opt_return_type = CONF_TYPE_MODE,
+		.default_val.mode_val = DEFAULT_STORAGE_FILE_PERMISSIONS,
+		.parser.parse_mode_cb = parse_perm,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* "Umask" */
+	{
+		.opt_key = CONF_UMASK,
+		.opt_type = CONF_TYPE_MODE,
+		.opt_return_type = CONF_TYPE_MODE,
+		.default_val.mode_val = DEFAULT_UMASK,
+		.parser.parse_mode_cb = parse_perm,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* "EnableLoginManager" */
+	{
+		.opt_key = CONF_ENABLE_LOGIN_MANAGER,
+		.opt_type = CONF_TYPE_BOOL,
+		.opt_return_type = CONF_TYPE_BOOL,
+		.default_val.bool_val = false,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* "DefaultmDNSConfiguration" */
+	{
+		.opt_key = CONF_DEFAULT_MDNS_CONFIGURATION,
+		.opt_type = CONF_TYPE_BOOL,
+		.opt_return_type = CONF_TYPE_BOOL,
+		.default_val.bool_val = false,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* "TetheringmDNSConfiguration" */
+	{
+		.opt_key = CONF_TETHERING_MDNS_CONFIGURATION,
+		.opt_type = CONF_TYPE_BOOL,
+		.opt_return_type = CONF_TYPE_BOOL,
+		.default_val.bool_val = false,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* "WifiWPA3Support" */
+	{
+		.opt_key = CONF_WIFI_WPA3_SUPPORT,
+		.opt_type = CONF_TYPE_STR,
+		.opt_return_type = CONF_TYPE_STR,
+		.default_val.str_val = NULL,
+		.parser.parse_str_cb = check_wpa3_support,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* "WifiWPA3SAEPWE" */
+	{
+		.opt_key = CONF_WIFI_WPA3_SAE_PWE,
+		.opt_type = CONF_TYPE_STR,
+		.opt_return_type = CONF_TYPE_STR,
+		.default_val.str_val = NULL,
+		.parser.parse_str_cb = check_wpa3_sae_pwe,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* "WifiWPA3SAECheckMFP" */
+	{
+		.opt_key = CONF_WIFI_WPA3_SAE_CHECK_MFP,
+		.opt_type = CONF_TYPE_BOOL,
+		.opt_return_type = CONF_TYPE_BOOL,
+		.default_val.bool_val = false,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* "WifiWMTEnableSequence" */
+	{
+		.opt_key = CONF_WIFI_WMT_ENABLE_SEQUENCE,
+		.opt_type = CONF_TYPE_STR,
+		.opt_return_type = CONF_TYPE_STR,
+		.default_val.str_val = NULL,
+		.parser.parse_str_cb = NULL,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* "WifiWMTDisableSequence" */
+	{
+		.opt_key = CONF_WIFI_WMT_DISABLE_SEQUENCE,
+		.opt_type = CONF_TYPE_STR,
+		.opt_return_type = CONF_TYPE_STR,
+		.default_val.str_val = NULL,
+		.parser.parse_str_cb = NULL,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* "WifiWMTDualMode" */
+	{
+		.opt_key = CONF_WIFI_WMT_DUAL_MODE,
+		.opt_type = CONF_TYPE_BOOL,
+		.opt_return_type = CONF_TYPE_BOOL,
+		.default_val.bool_val = false,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* "DisablePlugins" */
+	{
+		.opt_key = CONF_DISABLE_PLUGINS,
+		.opt_type = CONF_TYPE_STRARR,
+		.opt_return_type = CONF_TYPE_STR,
+		.default_val.str_val = NULL,
+		.parser.parse_list_cb = parse_disable_plugins,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* "config" */
+	{
+		.opt_key = CONF_OPTION_CONFIG,
+		.opt_type = CONF_TYPE_STR,
+		.opt_return_type = CONF_TYPE_STR,
+		.default_val.str_val = NULL,
+		.parser.parse_str_cb = NULL,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* "debug" */
+	{
+		.opt_key = CONF_OPTION_DEBUG,
+		.opt_type = CONF_TYPE_STR,
+		.opt_return_type = CONF_TYPE_STR,
+		.default_val.str_val = NULL,
+		.parser.parse_str_cb = NULL,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* "device" */
+	{
+		.opt_key = CONF_OPTION_DEVICE,
+		.opt_type = CONF_TYPE_STR,
+		.opt_return_type = CONF_TYPE_STR,
+		.default_val.str_val = NULL,
+		.parser.parse_str_cb = NULL,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* "nodevice" */
+	{
+		.opt_key = CONF_OPTION_NODEVICE,
+		.opt_type = CONF_TYPE_STR,
+		.opt_return_type = CONF_TYPE_STR,
+		.default_val.str_val = NULL,
+		.parser.parse_str_cb = NULL,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* "plugin" */
+	{
+		.opt_key = CONF_OPTION_PLUGIN,
+		.opt_type = CONF_TYPE_STRARR,
+		.opt_return_type = CONF_TYPE_STR,
+		.default_val.str_val = NULL,
+		.parser.parse_list_cb = NULL,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+	/* "noplugin" */
+	{
+		.opt_key = CONF_OPTION_NOPLUGIN,
+		.opt_type = CONF_TYPE_STRARR,
+		.opt_return_type = CONF_TYPE_STR,
+		.default_val.str_val = NULL,
+		.parser.parse_list_cb = NULL,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
+
+	{ 0 }
+};
+
+/* Generic read function that dispatches based on type */
+static void read_config_value(GKeyFile *config, struct config_option *option,
+								bool append)
+{
+	GError *error = NULL;
+	const char *group = GENERAL_GROUP;
+	char *str = NULL;
+	char **list;
+	gsize len;
+
+	if (!option)
+		return;
+
+	if (!g_key_file_has_key(config, group, option->opt_key, NULL))
+		return;
+
+	switch (option->opt_type) {
+	case CONF_TYPE_BOOL:
+		bool value = __connman_config_get_bool(config, group,
+						option->opt_key, &error);
+		if (error) {
+			if (option->error_cb)
+				option->error_cb();
+			break;
+		}
+
+		set_bool_value(option, value);
+
+		break;
+	case CONF_TYPE_UINT:
+		gint integer = g_key_file_get_integer(config, group,
+						option->opt_key, &error);
+		/* Ignore negative integer values. 0 is a valid value. */
+		if (error || integer < 0) {
+			if (option->error_cb)
+				option->error_cb();
+			break;
+		}
+
+		set_uint_value(option, integer * option->multiplier);
+
+		break;
+	case CONF_TYPE_DOUBLE:
+		double real = g_key_file_get_double(config, group,
+						option->opt_key, &error);
+		if (error || real < 0) {
+			if (option->error_cb)
+				option->error_cb();
+			break;
+		}
+
+		set_uint_value(option, real * option->multiplier);
+
+		break;
+	case CONF_TYPE_STR:
+		str = __connman_config_get_string(config, group,
+						option->opt_key, &error);
+		if (error) {
+			if (option->error_cb)
+				option->error_cb();
+			g_free(str);
+			break;
+		}
+
+		if (str) {
+			set_str_value(option, str);
+			g_free(str);
+		}
+
+		break;
+	case CONF_TYPE_STRARR:
+		list = __connman_config_get_string_list(config, group,
+						option->opt_key, &len, &error);
+		if (error) {
+			if (option->error_cb)
+				option->error_cb();
+		} else if (option->parser.parse_list_cb) {
+			char **new_list = option->parser.parse_list_cb(
+							list, &len);
+			if (new_list)
+				set_str_array_value(option, new_list);
+
+			g_strfreev(new_list);
+		} else {
+			set_str_array_value(option, list);
+		}
+
+		g_strfreev(list);
+		break;
+	case CONF_TYPE_UINTARR:
+		list = __connman_config_get_string_list(config, group,
+						option->opt_key, &len, &error);
+		if (error) {
+			if (option->error_cb)
+				option->error_cb();
+		} else if (option->parser.parse_uint_list_cb) {
+			unsigned int *uint_list =
+					option->parser.parse_uint_list_cb(
+								list, len);
+			if (uint_list)
+				set_int_array_value(option, uint_list);
+		}
+
+		g_strfreev(list);
+		break;
+	case CONF_TYPE_HASHTABLE:
+		list = __connman_config_get_string_list(config, group,
+						option->opt_key, &len, &error);
+		if (error) {
+			if (option->error_cb)
+				option->error_cb();
+		} else if (option->parser.parse_hashtable_cb) {
+			GHashTable *hash = option->parser.parse_hashtable_cb(
+								list, len);
+			if (hash)
+				set_hash_table_value(option, hash);
+		}
+
+		g_strfreev(list);
+		break;
+	case CONF_TYPE_MODE:
+		str = __connman_config_get_string(config, group,
+						option->opt_key, &error);
+		if (error) {
+			if (option->error_cb)
+				option->error_cb();
+		} else if (option->parser.parse_mode_cb) {
+			mode_t perm = 0;
+			if (option->parser.parse_mode_cb(str, &perm))
+				set_mode_value(option, perm);
+		}
+
+		g_free(str);
+		break;
 	}
 
 	g_clear_error(&error);
@@ -1091,229 +1540,249 @@ static void read_config_value(GKeyFile *config, const char *key, bool append)
 static void read_non_main_config(GKeyFile *config, bool append)
 {
 	GError *error = NULL;
+	struct config_option *opt;
 	char **keys;
 	gsize len;
+	int i;
+
+	DBG("");
 
 	if (!config)
 		return;
 
-	keys = g_key_file_get_keys(config, "General", &len, &error);
+	keys = g_key_file_get_keys(config, GENERAL_GROUP, &len, &error);
 	if (!error) {
-		int i;
 		for (i = 0; i < len; i++) {
-			if (!__connman_setting_is_supported_option(keys[i])) {
+			opt = config_option_lookup(keys[i]);
+			if (!opt) {
 				DBG("invalid key %s", keys[i]);
 				continue;
 			}
 
-			DBG("read key %s", keys[i]);
-			read_config_value(config, keys[i], append);
+			read_config_value(config, opt, append);
 		}
 	}
 
 	g_clear_error(&error);
+	g_strfreev(keys);
+}
+
+static void initialize_default_values()
+{
+	struct config_option *opt;
+	int i;
+
+	DBG("");
+
+	for (i = 0; config_options[i].opt_key; i++) {
+		opt = &config_options[i];
+
+		if (g_str_equal(opt->opt_key, CONF_AUTO_CONNECT_TECHS)) {
+			if (!opt->parser.parse_uint_list_cb)
+				continue;
+
+			opt->default_val.int_array_val =
+				opt->parser.parse_uint_list_cb(default_auto_connect,
+					CONF_ARRAY_SIZE(default_auto_connect));
+		} else if (g_str_equal(opt->opt_key, CONF_ENABLED_TECHS)) {
+			if (!opt->parser.parse_uint_list_cb)
+				continue;
+
+			opt->default_val.int_array_val =
+				opt->parser.parse_uint_list_cb(
+					default_enabled_techs,
+					CONF_ARRAY_SIZE(default_enabled_techs));
+		} else if (g_str_equal(opt->opt_key, CONF_FAVORITE_TECHS)) {
+			if (!opt->parser.parse_uint_list_cb)
+				continue;
+
+			opt->default_val.int_array_val =
+				opt->parser.parse_uint_list_cb(default_favorite_techs,
+					CONF_ARRAY_SIZE(default_favorite_techs));
+		} else if (g_str_equal(opt->opt_key,
+						CONF_BLACKLISTED_INTERFACES)) {
+			opt->default_val.str_array_val = g_strdupv(
+							default_blacklist);
+		} else {
+			switch (opt->opt_type) {
+			case CONF_TYPE_STR:
+				/*
+				* Copy the string default only when the
+				* conversion to an another type requires it.
+				*/
+				if (opt->opt_return_type == CONF_TYPE_STR)
+					break;
+			/* Copy simple types */
+			case CONF_TYPE_BOOL:
+			case CONF_TYPE_UINT:
+			case CONF_TYPE_DOUBLE:
+			case CONF_TYPE_MODE:
+				opt->current_val = opt->default_val;
+				break;
+			case CONF_TYPE_UINTARR:
+			case CONF_TYPE_STRARR:
+			case CONF_TYPE_HASHTABLE:
+				break;
+			}
+		}
+	}
 }
 
 void __connman_setting_read_config_values(GKeyFile *config, bool mainconfig,
 								bool append)
 {
-	int i ;
+	unsigned int initial_interval;
+	unsigned int max_interval;
+	//unsigned int failures_threshold;
+	//unsigned int successes_threshold;
+	int i;
 
 	if (!mainconfig) {
 		read_non_main_config(config, append);
 		return;
 	}
 
-	if (!config) {
-		connman_settings.auto_connect =
-			parse_service_types(default_auto_connect,
-				CONF_ARRAY_SIZE(default_auto_connect));
-		connman_settings.favorite_techs =
-			parse_service_types(default_favorite_techs,
-				CONF_ARRAY_SIZE(default_favorite_techs));
-		connman_settings.blacklisted_interfaces =
-			g_strdupv(default_blacklist);
-		return;
+	initialize_default_values();
+
+	if (config) {
+		for (i = 0; config_options[i].opt_key; i++)
+			read_config_value(config, &config_options[i], append);
 	}
 
-	for (i = 0; i < CONF_ARRAY_SIZE(supported_options); i++)
-		read_config_value(config, supported_options[i].opt_key, append);
-
-	if (!connman_settings.enable_online_check)
-		connman_info("Online check disabled by main config.");
-
-	if (connman_settings.online_check_initial_interval < 1 ||
-		connman_settings.online_check_initial_interval >
-		connman_settings.online_check_max_interval) {
+	initial_interval = connman_setting_get_uint(
+					CONF_ONLINE_CHECK_INITIAL_INTERVAL);
+	max_interval = connman_setting_get_uint(CONF_ONLINE_CHECK_MAX_INTERVAL);
+	if (initial_interval < 1 || initial_interval > max_interval) {
 		connman_warn("Incorrect online check intervals [%u, %u]",
-				connman_settings.online_check_initial_interval,
-				connman_settings.online_check_max_interval);
-		connman_settings.online_check_initial_interval =
-			DEFAULT_ONLINE_CHECK_INITIAL_INTERVAL;
-		connman_settings.online_check_max_interval =
-			DEFAULT_ONLINE_CHECK_MAX_INTERVAL;
-	}
-}
-
-void __connman_setting_set_option(const char *key, const char *value)
-{
-	if (!key)
-		return;
-
-	DBG("key %s value %s", key, value);
-
-	if (g_str_equal(key, CONF_OPTION_PLUGIN)) {
-		if (connman_settings.option_plugin) {
-			char *prev = connman_settings.option_plugin;
-
-			connman_settings.option_plugin = g_strconcat(prev,
-							",", value, NULL);
-			g_free(prev);
-		} else {
-			connman_settings.option_plugin = g_strdup(value);
-		}
+						initial_interval, max_interval);
+		setting_set_uint(CONF_ONLINE_CHECK_INITIAL_INTERVAL,
+				DEFAULT_ONLINE_CHECK_INITIAL_INTERVAL);
+		setting_set_uint(CONF_ONLINE_CHECK_MAX_INTERVAL,
+				DEFAULT_ONLINE_CHECK_MAX_INTERVAL);
 	}
 
-	if (g_str_equal(key, CONF_OPTION_NOPLUGIN)) {
-		if (connman_settings.option_noplugin) {
-			char *prev = connman_settings.option_noplugin;
-
-			connman_settings.option_noplugin = g_strconcat(prev,
-							",", value, NULL);
-			g_free(prev);
-		} else {
-			connman_settings.option_noplugin = g_strdup(value);
-		}
+	/*failures_threshold = connman_setting_get_uint(
+					CONF_ONLINE_CHECK_FAILURES_THRESHOLD);
+	if (failures_threshold < 1) {
+		connman_warn("Incorrect online check failures threshold [%d]",
+						failures_threshold);
+		setting_set_uint(CONF_ONLINE_CHECK_FAILURES_THRESHOLD,
+				DEFAULT_ONLINE_CHECK_FAILURES_THRESHOLD);
 	}
 
-	if (g_str_equal(key, CONF_OPTION_CONFIG)) {
-		g_free(connman_settings.option_config);
-		connman_settings.option_config = g_strdup(value);
-	}
-
-	if (g_str_equal(key, CONF_OPTION_DEBUG)) {
-		if (value) {
-			if (!connman_settings.option_debug ||
-					!g_strcmp0(
-						connman_settings.option_debug,
-						"*")) {
-				g_free(connman_settings.option_debug);
-				connman_settings.option_debug = g_strdup(value);
-			} else {
-				char *prev = connman_settings.option_debug;
-
-				connman_settings.option_debug = g_strconcat(
-							prev, ",", value, NULL);
-				g_free(prev);
-			}
-		} else {
-			g_free(connman_settings.option_debug);
-			connman_settings.option_debug = g_strdup("*");
-		}
-	}
-
-	if (g_str_equal(key, CONF_OPTION_DEVICE)) {
-		g_free(connman_settings.option_device);
-		connman_settings.option_device = g_strdup(value);
-	}
-
-	if (g_str_equal(key, CONF_OPTION_NODEVICE)) {
-		g_free(connman_settings.option_nodevice);
-		connman_settings.option_nodevice = g_strdup(value);
-	}
-
-	if (g_str_equal(key, CONF_OPTION_WIFI)) {
-		g_free(connman_settings.option_wifi);
-		connman_settings.option_wifi = g_strdup(value);
-	}
+	successes_threshold = connman_setting_get_uint(
+					CONF_ONLINE_CHECK_SUCCESSES_THRESHOLD);
+	if (successes_threshold < 1) {
+		connman_warn("Incorrect online check successes threshold [%d]",
+						successes_threshold);
+		setting_set_uint(CONF_ONLINE_CHECK_SUCCESSES_THRESHOLD,
+				DEFAULT_ONLINE_CHECK_SUCCESSES_THRESHOLD);
+	}*/
 }
 
 const char *__connman_setting_get_fallback_device_type(const char *interface)
 {
-	if (!connman_settings.fallback_device_types)
+	struct config_option *opt;
+
+	opt = config_option_lookup(CONF_FALLBACK_DEVICE_TYPES);
+	if (!opt || !opt->current_val.hash_table_val)
 		return NULL;
 
-	return g_hash_table_lookup(connman_settings.fallback_device_types,
-			interface);
+	return g_hash_table_lookup(opt->current_val.hash_table_val, interface);
 }
 
 bool __connman_setting_is_supported_option(const char *key)
 {
-	int i;
+	return config_option_lookup(key) != NULL;
+}
 
-	if (!key)
-		return false;
-
-	for (i = 0; i < CONF_ARRAY_SIZE(supported_options); i++) {
-		if (!g_strcmp0(key, supported_options[i].opt_key))
-			return true;
-	}
-
-	return false;
+void __connman_setting_log()
+{
+	//online_check_settings_log();
 }
 
 int __connman_setting_init()
 {
+	struct config_option *opt;
+	int i;
+
 	DBG("");
 
-	memset(&connman_settings, 0, sizeof(connman_settings));
+	if (config_options_table)
+		g_hash_table_unref(config_options_table);
 
-	connman_settings.bg_scan = true;
-	connman_settings.timeout_inputreq = DEFAULT_INPUT_REQUEST_TIMEOUT;
-	connman_settings.timeout_browserlaunch = DEFAULT_BROWSER_LAUNCH_TIMEOUT;
-	connman_settings.allow_hostname_updates = true;
-	connman_settings.allow_domainname_updates = true;
-	connman_settings.storage_root_permissions =
-					DEFAULT_STOGAGE_ROOT_PERMISSIONS;
-	connman_settings.storage_dir_permissions =
-					DEFAULT_STORAGE_DIR_PERMISSIONS;
-	connman_settings.storage_file_permissions =
-					DEFAULT_STORAGE_FILE_PERMISSIONS;
-	connman_settings.umask = DEFAULT_UMASK;
-	connman_settings.enable_online_check = true;
-	connman_settings.online_check_initial_interval =
-					DEFAULT_ONLINE_CHECK_INITIAL_INTERVAL;
-	connman_settings.online_check_max_interval =
-					DEFAULT_ONLINE_CHECK_MAX_INTERVAL;
+	config_options_table = g_hash_table_new(g_str_hash, g_str_equal);
+	if (!config_options_table)
+		return -ENOMEM;
+
+	for (i = 0; config_options[i].opt_key; i++) {
+		opt = &config_options[i];
+
+		g_hash_table_insert(config_options_table, (gpointer)opt->opt_key,
+					opt);
+	}
 
 	return 0;
 }
 
 void __connman_setting_cleanup()
 {
+	int i;
+	struct config_option *opt;
+
 	DBG("");
 
-	g_strfreev(connman_settings.fallback_timeservers);
-	g_strfreev(connman_settings.fallback_nameservers);
-	g_strfreev(connman_settings.blacklisted_interfaces);
-	g_strfreev(connman_settings.tethering_technologies);
-	g_strfreev(connman_settings.dont_bring_down_at_startup);
+	for (i = 0; config_options[i].opt_key; i++) {
+		opt = &config_options[i];
 
-	g_free(connman_settings.ipv6_status_url);
-	g_free(connman_settings.ipv4_status_url);
-	g_free(connman_settings.tethering_subnet_block);
-	g_free(connman_settings.fs_identity);
-	g_free(connman_settings.storage_root);
-	g_free(connman_settings.user_storage_dir);
-	g_free(connman_settings.vendor_class_id);
-	g_free(connman_settings.localtime);
-	g_free(connman_settings.wifi_wpa3_sae_pwe);
-	g_free(connman_settings.wifi_wmt_enable_sequence);
-	g_free(connman_settings.wifi_wmt_disable_sequence);
+		switch (opt->opt_type) {
+		case CONF_TYPE_BOOL:
+		case CONF_TYPE_UINT:
+			break;
+		case CONF_TYPE_STR:
+			/* Stores into something else, skip */
+			if (opt->opt_return_type != CONF_TYPE_STR)
+				break;
 
-	g_free(connman_settings.auto_connect);
-	g_free(connman_settings.favorite_techs);
-	g_free(connman_settings.preferred_techs);
-	g_free(connman_settings.always_connected_techs);
+			g_free(opt->current_val.str_val);
+			opt->current_val.str_val = NULL;
+			break;
+		case CONF_TYPE_STRARR:
+			if (opt->opt_return_type == CONF_TYPE_STR) {
+				g_free(opt->current_val.str_val);
+				opt->current_val.str_val = NULL;
+				g_free(opt->default_val.str_val);
+				opt->default_val.str_val = NULL;
+				break;
+			}
 
-	g_free(connman_settings.option_config);
-	g_free(connman_settings.option_debug);
-	g_free(connman_settings.option_device);
-	g_free(connman_settings.option_plugin);
-	g_free(connman_settings.option_nodevice);
-	g_free(connman_settings.option_noplugin);
-	g_free(connman_settings.option_wifi);
+			g_strfreev(opt->current_val.str_array_val);
+			opt->current_val.str_array_val = NULL;
+			g_strfreev(opt->default_val.str_array_val);
+			opt->default_val.str_array_val = NULL;
+			break;
+		case CONF_TYPE_UINTARR:
+			g_free(opt->current_val.int_array_val);
+			opt->current_val.int_array_val = NULL;
+			g_free(opt->default_val.int_array_val);
+			opt->default_val.int_array_val = NULL;
+			break;
+		case CONF_TYPE_HASHTABLE:
+			if (opt->current_val.hash_table_val)
+				g_hash_table_unref(
+					opt->current_val.hash_table_val);
 
-	if (connman_settings.fallback_device_types)
-		g_hash_table_unref(connman_settings.fallback_device_types);
+			opt->current_val.hash_table_val = NULL;
+			break;
+		case CONF_TYPE_MODE:
+			break;
+		default:
+			break;
+		}
+	}
+
+	if (config_options_table) {
+		g_hash_table_destroy(config_options_table);
+		config_options_table = NULL;
+	}
 }
