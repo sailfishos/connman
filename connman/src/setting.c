@@ -1609,14 +1609,9 @@ static void initialize_default_values()
 				/*
 				* Copy the string default only when the
 				* conversion to an another type requires it.
-				* Otherwise just copy the str default.
 				*/
-				if (opt->opt_return_type == CONF_TYPE_STR) {
-					/*opt->current_val.str_val = g_strdup(
-						opt->default_val.str_val);*/
+				if (opt->opt_return_type == CONF_TYPE_STR)
 					break;
-				}
-				break;
 			/* Copy simple types */
 			case CONF_TYPE_BOOL:
 			case CONF_TYPE_UINT:
