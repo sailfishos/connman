@@ -95,7 +95,8 @@ struct connection_data {
 	GHashTable *user_routes;
 	GHashTable *setting_strings;
 
-	struct connman_ipaddress *ip;
+	struct connman_ipaddress *ipv4;
+	struct connman_ipaddress *ipv6;
 
 	GResolv *resolv;
 	guint resolv_id;
@@ -359,9 +360,12 @@ static int create_provider(struct connection_data *data, void *user_data)
 		if (g_str_equal(data->state, "ready")) {
 			connman_provider_set_index(data->provider,
 							data->index);
-			if (data->ip)
+			if (data->ipv4)
 				connman_provider_set_ipaddress(data->provider,
-								data->ip);
+								data->ipv4);
+			if (data->ipv6)
+				connman_provider_set_ipaddress(data->provider,
+								data->ipv6);
 		}
 
 		set_provider_state(data);
@@ -409,6 +413,7 @@ static int extract_ip(DBusMessageIter *array, int family,
 						struct connection_data *data)
 {
 	DBusMessageIter dict;
+	struct connman_ipaddress *addr;
 	char *address = NULL, *gateway = NULL, *netmask = NULL, *peer = NULL;
 	unsigned char prefix_len = 128;
 
@@ -447,26 +452,28 @@ static int extract_ip(DBusMessageIter *array, int family,
 		dbus_message_iter_next(&dict);
 	}
 
-	connman_ipaddress_free(data->ip);
-	data->ip = connman_ipaddress_alloc(family);
-	if (!data->ip)
+	addr = connman_ipaddress_alloc(family);
+	if (!addr)
 		return -ENOMEM;
+
+	connman_ipaddress_set_peer(addr, peer);
+	connman_ipaddress_set_p2p(addr, true);
 
 	switch (family) {
 	case AF_INET:
-		connman_ipaddress_set_ipv4(data->ip, address, netmask,
-								gateway);
+		connman_ipaddress_set_ipv4(addr, address, netmask, gateway);
+		connman_ipaddress_free(data->ipv4);
+		data->ipv4 = addr;
 		break;
 	case AF_INET6:
-		connman_ipaddress_set_ipv6(data->ip, address, prefix_len,
-								gateway);
+		connman_ipaddress_set_ipv6(addr, address, prefix_len, gateway);
+		connman_ipaddress_free(data->ipv6);
+		data->ipv6 = addr;
 		break;
 	default:
+		connman_ipaddress_free(addr);
 		return -EINVAL;
 	}
-
-	connman_ipaddress_set_peer(data->ip, peer);
-	connman_ipaddress_set_p2p(data->ip, true);
 
 	return 0;
 }
@@ -1861,7 +1868,8 @@ static void connection_destroy(gpointer hash_data)
 	g_hash_table_destroy(data->user_routes);
 	g_strfreev(data->nameservers);
 	g_hash_table_destroy(data->setting_strings);
-	connman_ipaddress_free(data->ip);
+	connman_ipaddress_free(data->ipv4);
+	connman_ipaddress_free(data->ipv6);
 
 	cancel_host_resolv(data);
 
@@ -2125,7 +2133,8 @@ static gboolean property_changed(DBusConnection *conn,
 	const char *path = dbus_message_get_path(message);
 	struct connection_data *data = NULL;
 	DBusMessageIter iter, value;
-	bool ip_set = false;
+	bool ipv4_set = false;
+	bool ipv6_set = false;
 	int err;
 	char *str;
 	const char *key;
@@ -2170,11 +2179,11 @@ static gboolean property_changed(DBusConnection *conn,
 		dbus_message_iter_get_basic(&value, &data->index);
 		connman_provider_set_index(data->provider, data->index);
 	} else if (g_str_equal(key, "IPv4")) {
-		err = extract_ip(&value, AF_INET, data);
-		ip_set = true;
+		if (!extract_ip(&value, AF_INET, data))
+			ipv4_set = true;
 	} else if (g_str_equal(key, "IPv6")) {
-		err = extract_ip(&value, AF_INET6, data);
-		ip_set = true;
+		if (!extract_ip(&value, AF_INET6, data))
+			ipv6_set = true;
 	} else if (g_str_equal(key, "ServerRoutes")) {
 		err = routes_changed(&value, data->server_routes);
 		/*
@@ -2221,11 +2230,20 @@ static gboolean property_changed(DBusConnection *conn,
 		data->conn_error_counter = get_dbus_uint32(&value);
 	}
 
-	if (ip_set && err == 0) {
-		err = connman_provider_set_ipaddress(data->provider, data->ip);
+	if (ipv4_set) {
+		err = connman_provider_set_ipaddress(data->provider,
+							data->ipv4);
 		if (err < 0)
-			DBG("setting provider IP address failed (%s/%d)",
-				strerror(-err), -err);
+			DBG("setting provider IPv4 address failed (%s/%d)",
+							strerror(-err), -err);
+	}
+
+	if (ipv6_set) {
+		err = connman_provider_set_ipaddress(data->provider,
+							data->ipv6);
+		if (err < 0)
+			DBG("setting provider IPv6 address failed (%s/%d)",
+							strerror(-err), -err);
 	}
 
 	return TRUE;
