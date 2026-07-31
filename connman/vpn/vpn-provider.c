@@ -3518,7 +3518,7 @@ int vpn_provider_append_route_complete(struct vpn_provider *provider,
 						provider, idx, family, network,
 						netmask, gateway);
 
-	if (!netmask || !gateway || !network)
+	if (!netmask || !network)
 		return -EINVAL;
 
 	if (g_hash_table_lookup(provider->routes, GINT_TO_POINTER(idx)))
