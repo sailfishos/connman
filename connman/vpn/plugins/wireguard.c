@@ -152,7 +152,7 @@ static int parse_allowed_ips(const char *allowed_ips, wg_peer *peer,
 	for (i = 0; tokens[i]; i++) {
 		toks = g_strsplit(tokens[i], "/", -1);
 		if (g_strv_length(toks) != 2) {
-			DBG("Ignore AllowedIPs value %s", tokens[i]);
+			DBG("Ignore AllowedIPs value \"%s\", length %d", tokens[i], g_strv_length(toks));
 			g_strfreev(toks);
 			continue;
 		}
@@ -166,11 +166,13 @@ static int parse_allowed_ips(const char *allowed_ips, wg_peer *peer,
 			allowedip->family = AF_INET6;
 			memcpy(&allowedip->ip6, buf, sizeof(allowedip->ip6));
 		} else {
-			DBG("Ignore AllowedIPs value %s", tokens[i]);
+			DBG("Ignore AllowedIPs value \"%s\" not valid v4/v6", tokens[i]);
 			g_free(allowedip);
 			g_strfreev(toks);
 			continue;
 		}
+
+		DBG("use addr %s/%s", toks[0], toks[1]);
 
 		allowedip->cidr = g_ascii_strtoull(toks[1], &send, 10);
 
@@ -673,19 +675,10 @@ static gboolean wg_route_setup_cb(gpointer user_data)
 	struct wireguard_info *info = user_data;
 	struct wg_allowedip *allowedip;
 	char addr[INET6_ADDRSTRLEN] = { 0 };
-	char endpoint[INET6_ADDRSTRLEN] = { 0 };
 	char *netmask;
-	int family;
 	unsigned long idx = 0;
 
 	info->route_setup_id = 0;
-
-	family = info->peer.endpoint.addr.sa_family;
-
-	if (!endpoint_to_str(&info->peer, endpoint, INET6_ADDRSTRLEN)) {
-		connman_warn("Cannot setup WireGuard routes, endpoint failure");
-		return G_SOURCE_REMOVE;
-	}
 
 	wg_for_each_allowedip(&info->peer, allowedip) {
 		memset(&addr, 0, INET6_ADDRSTRLEN);
@@ -712,18 +705,11 @@ static gboolean wg_route_setup_cb(gpointer user_data)
 			continue;
 		}
 
-		/* Ignore any routes for this peer family to avoid duplicates */
-		if (connman_inet_is_any_addr(addr, allowedip->family) &&
-						allowedip->family == family) {
-			DBG("ignore any addr %s", addr);
-			continue;
-		}
-
 		netmask = cidr_to_netmask(allowedip->family, allowedip->cidr);
 
 		vpn_provider_append_route_complete(info->provider, idx,
 						allowedip->family, addr,
-						netmask, endpoint);
+						netmask, NULL);
 
 		g_free(netmask);
 		++idx;
