@@ -73,6 +73,11 @@ struct sockaddr_u {
 	};
 };
 
+struct reresolve_data {
+	struct wireguard_info *info;
+	struct wg_peer_resolv *resolv;
+};
+
 struct wg_peer_resolv {
 	int id;
 	char *endpoint_fqdn;
@@ -82,6 +87,8 @@ struct wg_peer_resolv {
 	guint resolv_id;
 	guint remove_resolv_id;
 	struct wg_peer_resolv *next;
+	// While we run the resolv we pass this data
+	struct reresolve_data data;
 };
 
 struct {
@@ -516,11 +523,6 @@ static bool sockaddr_cmp_addr(struct sockaddr_u *a, struct sockaddr_u *b)
 	return false;
 }
 
-struct reresolve_data {
-	struct wireguard_info *info;
-	struct wg_peer_resolv *resolv;
-};
-
 static void run_dns_reresolve(struct reresolve_data *data);
 static void run_route_setup(struct wireguard_info *info, guint timeout);
 
@@ -674,46 +676,6 @@ static void resolve_endpoint_cb(GResolvResultStatus status,
 
 static int disconnect(struct vpn_provider *provider, int error);
 
-static gboolean wg_dns_reresolve_cb(gpointer user_data)
-{
-	struct reresolve_data *data = user_data;
-	int err;
-
-	DBG("");
-
-	data->resolv->reresolve_id = 0;
-
-	if (data->resolv->resolv_id > 0) {
-		DBG("previous query was running, abort it");
-		remove_resolv(data->resolv);
-	}
-
-	data->resolv->resolv = vpn_util_resolve_new(0);
-	if (!data->resolv->resolv) {
-		connman_error("cannot create GResolv");
-		g_free(data);
-		return G_SOURCE_REMOVE;
-	}
-
-	DBG("endpoint_fqdn %s", data->resolv->endpoint_fqdn);
-
-	data->resolv->resolv_id = vpn_util_resolve_hostname(
-						data->resolv->resolv,
-						data->resolv->endpoint_fqdn,
-						resolve_endpoint_cb, data);
-
-	err = vpn_util_get_resolve_error(data->resolv->resolv);
-	if (!data->resolv->resolv_id && err) {
-		connman_error("failed to start hostname lookup for %s, err %d",
-						data->resolv->endpoint_fqdn,
-						err);
-		disconnect(data->info->provider, err);
-		g_free(data);
-	}
-
-	return G_SOURCE_REMOVE;
-}
-
 static gboolean wg_route_setup_cb(gpointer user_data)
 {
 	struct wireguard_info *info = user_data;
@@ -769,6 +731,43 @@ static gboolean wg_route_setup_cb(gpointer user_data)
 			g_free(netmask);
 			++idx;
 		}
+	}
+
+	return G_SOURCE_REMOVE;
+}
+
+static gboolean wg_dns_reresolve_cb(gpointer user_data)
+{
+	struct reresolve_data *data = user_data;
+	struct wg_peer_resolv *resolv = data->resolv;
+	int err;
+
+	DBG("");
+
+	resolv->reresolve_id = 0;
+
+	if (resolv->resolv_id > 0) {
+		DBG("previous query was running, abort it");
+		remove_resolv(resolv);
+	}
+
+	resolv->resolv = vpn_util_resolve_new(0);
+	if (!resolv->resolv) {
+		connman_error("cannot create GResolv");
+		return G_SOURCE_REMOVE;
+	}
+
+	DBG("endpoint_fqdn %s", resolv->endpoint_fqdn);
+
+	resolv->resolv_id = vpn_util_resolve_hostname(resolv->resolv,
+						resolv->endpoint_fqdn,
+						resolve_endpoint_cb, data);
+
+	err = vpn_util_get_resolve_error(resolv->resolv);
+	if (!resolv->resolv_id && err) {
+		connman_error("failed to start hostname lookup for %s, err %d",
+						resolv->endpoint_fqdn, err);
+		disconnect(data->info->provider, err);
 	}
 
 	return G_SOURCE_REMOVE;
@@ -1073,7 +1072,7 @@ done:
 
 	if (!err) {
 		/* Run DNS reresolve only for hostnames that require resolve. */
-		struct wg_peer_resolv *r = info->resolv;
+		struct wg_peer_resolv *r;
 		for (r = info->resolv; r; r = r->next) {
 			family = connman_inet_check_ipaddress(
 							r->endpoint_fqdn);
@@ -1081,12 +1080,9 @@ done:
 				DBG("start DNS reresolve for %s",
 							r->endpoint_fqdn);
 
-				struct reresolve_data *data = g_try_new0(
-						struct reresolve_data, 1);
-				data->info = info;
-				data->resolv = r;
-
-				run_dns_reresolve(data);
+				r->data.info = info;
+				r->data.resolv = r;
+				run_dns_reresolve(&r->data);
 			}
 		}
 
