@@ -288,8 +288,9 @@ static const char *endpoint_to_str(struct wg_peer *peer, char *buf,
 }
 
 static int parse_endpoint_hostname(const char *host, const char *port,
-							struct wg_peer *peer,
-							char **gateway_resolved)
+						struct wg_peer *peer,
+						char **gateway4_resolved,
+						char **gateway6_resolved)
 {
 	struct sockaddr_u *addr;
 	char **tokens;
@@ -326,7 +327,20 @@ static int parse_endpoint_hostname(const char *host, const char *port,
 		DBG("success");
 	}
 
-	*gateway_resolved = gw ? g_strdup(gw) : g_strdup(tokens[0]);
+	switch (peer->endpoint.addr.sa_family) {
+	case AF_INET:
+		*gateway4_resolved = gw ? g_strdup(gw) : g_strdup(tokens[0]);
+		*gateway6_resolved = NULL;
+		break;
+	case AF_INET6:
+		*gateway4_resolved = NULL;
+		*gateway6_resolved = gw ? g_strdup(gw) : g_strdup(tokens[0]);
+		break;
+	default:
+		DBG("invalid or no family set, set to both?");
+		*gateway4_resolved = gw ? g_strdup(gw) : g_strdup(tokens[0]);
+		*gateway6_resolved = gw ? g_strdup(gw) : g_strdup(tokens[0]);
+	}
 
 	g_strfreev(tokens);
 
@@ -390,8 +404,8 @@ static char *cidr_to_netmask(int family, unsigned char cidr)
 	return NULL;
 }
 
-static int parse_addresses(const char *address, const char *gateway,
-		struct wg_ipaddresses *ipaddresses)
+static int parse_addresses(const char *address, const char *gateway4,
+		const char *gateway6, struct wg_ipaddresses *ipaddresses)
 {
 	char buf[INET6_ADDRSTRLEN];
 	unsigned char prefixlen;
@@ -434,7 +448,7 @@ static int parse_addresses(const char *address, const char *gateway,
 			netmask = cidr_to_netmask(family, prefixlen);
 			ipaddress = connman_ipaddress_alloc(family);
 			err = connman_ipaddress_set_ipv4(ipaddress, tokens[0],
-							netmask, gateway);
+							netmask, gateway4);
 			g_free(netmask);
 		} else if (inet_pton(AF_INET6, tokens[0], buf) == 1) {
 			if (ipaddresses->ipaddress_ipv6) {
@@ -447,7 +461,7 @@ static int parse_addresses(const char *address, const char *gateway,
 			family = AF_INET6;
 			ipaddress = connman_ipaddress_alloc(family);
 			err = connman_ipaddress_set_ipv6(ipaddress, tokens[0],
-							prefixlen, gateway);
+							prefixlen, gateway6);
 		} else {
 			DBG("Invalid Wireguard.Address value");
 			err = -EINVAL;
@@ -559,9 +573,14 @@ static struct wg_peer *get_nth_peer(struct wireguard_info *info, int index)
 	struct wg_peer *peer;
 	int i = 0;
 
+	DBG("resolv index %d", index);
+
 	wg_for_each_peer(&info->device, peer) {
-		if (i == index)
+		DBG("peer %d", i);
+		if (i == index) {
+			DBG("return #%d peer", i);
 			return peer;
+		}
 		i++;
 	}
 
@@ -574,6 +593,7 @@ static void resolve_endpoint_cb(GResolvResultStatus status,
 	struct reresolve_data *data = user_data;
 	struct wireguard_info *info = data->info;
 	struct wg_peer_resolv *resolv = data->resolv;
+	struct wg_peer *peer;
 	struct sockaddr_u addr;
 	int err = 0;
 
@@ -643,7 +663,11 @@ static void resolve_endpoint_cb(GResolvResultStatus status,
 		return;
 	}
 
-	struct wg_peer *peer = get_nth_peer(info, resolv->id);
+	peer = get_nth_peer(info, resolv->id);
+	if (!peer) {
+		DBG("cannot find peer for resolv id %d", resolv->id);
+		return;
+	}
 
 	if (sockaddr_cmp_addr(&addr,
 			(struct sockaddr_u *)&peer->endpoint.addr)) {
@@ -805,6 +829,266 @@ static char *get_peer_string(int peerId, const char *suffix)
 	return g_strdup_printf("WireGuard.Peer%d.%s", peerId, suffix);
 }
 
+static int create_multipeer(struct wireguard_info *info, int peercount,
+		bool *do_split_routing, char **gateway4, char **gateway6)
+{
+	const char *option;
+	const char *endpoint;
+	int family;
+	int failedPeers = 0;
+	int err = 0;
+	int i;
+
+	for (i = 0; i < peercount; i++) {
+		struct wg_peer *peer = info->peer;
+		struct wg_peer_resolv *resolv;
+		char *str;
+
+		/* First one */
+		if (!peer) {
+			info->peer = g_try_new0(struct wg_peer, 1);
+			if (!info->peer) {
+				err = -ENOMEM;
+				DBG("Failed to allocate new #%d wg_peer", i);
+				break;
+			}
+
+			info->peer->flags = WGPEER_HAS_PUBLIC_KEY |
+						WGPEER_REPLACE_ALLOWEDIPS;
+			info->device.first_peer = info->peer;
+			info->device.last_peer = info->peer;
+
+			peer = info->peer;
+		/* Allocate next ones */
+		} else if (!peer->next_peer) {
+			peer->next_peer = g_try_new0(struct wg_peer, 1);
+			if (!peer->next_peer) {
+				err = -ENOMEM;
+				DBG("Failed to allocate new #%d wg_peer", i);
+				break;
+			}
+
+			/* Add data to next and set it as last */
+			peer = peer->next_peer;
+			peer->flags = WGPEER_HAS_PUBLIC_KEY |
+						WGPEER_REPLACE_ALLOWEDIPS;
+			info->device.last_peer = peer;
+		/* Last one failed, reuse the peer */
+		} else {
+			failedPeers++;
+			DBG("using skipped peer, failed: %d", failedPeers);
+		}
+
+		str = get_peer_string(i, "PublicKey");
+
+		option = vpn_provider_get_string(info->provider, str);
+		if (!option) {
+			DBG("%s is missing", str);
+			g_free(str);
+			continue;
+		}
+
+		g_free(str);
+
+		err = parse_key(option, peer->public_key);
+		if (err) {
+			DBG("Failed to parse public key");
+			continue;
+		}
+
+		str = get_peer_string(i, "PresharedKey");
+		option = vpn_provider_get_string(info->provider, str);
+		g_free(str);
+
+		if (option) {
+			peer->flags |= WGPEER_HAS_PRESHARED_KEY;
+			err = parse_key(option, peer->preshared_key);
+			if (err) {
+				DBG("Failed to parse pre-shared key");
+				continue;
+			}
+		}
+
+		str = get_peer_string(i, "AllowedIPs");
+		option = vpn_provider_get_string(info->provider, str);
+		if (!option) {
+			DBG("%s is missing", str);
+			g_free(str);
+			continue;
+		}
+		g_free(str);
+
+		err = parse_allowed_ips(option, peer, do_split_routing);
+		if (err) {
+			DBG("Failed to parse allowed IPs %s", option);
+			continue;
+		}
+
+		str = get_peer_string(i, "PersistentKeepalive");
+		option = vpn_provider_get_string(info->provider, str);
+		if (option) {
+			char *end;
+			peer->persistent_keepalive_interval =
+				g_ascii_strtoull(option, &end, 10);
+			peer->flags |= WGPEER_HAS_PERSISTENT_KEEPALIVE_INTERVAL;
+		}
+
+		g_free(str);
+
+		str = get_peer_string(i, "EndpointPort");
+		option = vpn_provider_get_string(info->provider, str);
+		if (!option)
+			option = "51820";
+		g_free(str);
+
+		str = get_peer_string(i, "Endpoint");
+		endpoint = vpn_provider_get_string(info->provider, str);
+		g_free(str);
+
+		/*
+		 * Use the resolve timeout only with re-resolve. Here the
+		 * network is setup as the transport is used. In succeeding
+		 * attempts resolving is needed as it is done over potentially
+		 * misconfigured WireGuard connection that may end up blocking
+		 * vpnd with getaddrinfo().
+		 */
+		err = parse_endpoint_hostname(endpoint, option, peer, gateway4,
+						gateway6);
+		if (err) {
+			DBG("Failed to parse endpoint %s:%s", endpoint, option);
+			continue;
+		}
+
+		family = connman_inet_check_ipaddress(endpoint);
+		if (family != AF_INET && family != AF_INET6) {
+			DBG("start DNS reresolve for %s", endpoint);
+			resolv = info->resolv;
+
+			if (!resolv) {
+				info->resolv = g_try_new0(struct wg_peer_resolv,
+								1);
+				resolv = info->resolv;
+			} else {
+				resolv->next = g_try_new0(struct wg_peer_resolv,
+								1);
+				resolv = resolv->next;
+			}
+
+			if (!resolv) {
+				err = -ENOMEM;
+				DBG("failed to allocate new resolv for #%d", i);
+				return -ENOMEM;
+			}
+
+			resolv->endpoint_fqdn = g_strdup(endpoint);
+			resolv->port = g_strdup(option);
+			resolv->id = i;
+		}
+	}
+
+	return 0;
+}
+
+static int create_singlepeer(struct wireguard_info *info,
+		bool *do_split_routing, char **gateway4, char **gateway6)
+{
+	const char *option;
+	const char *endpoint;
+	int family;
+	int err = 0;
+
+	DBG("");
+
+	info->peer = g_try_new0(struct wg_peer, 1);
+	if (!info->peer) {
+		DBG("Failed to allocate peer");
+		return -ENOMEM;
+	}
+
+	info->peer->flags = WGPEER_HAS_PUBLIC_KEY | WGPEER_REPLACE_ALLOWEDIPS;
+	info->device.first_peer = info->peer;
+	info->device.last_peer = info->peer;
+
+	option = vpn_provider_get_string(info->provider, "WireGuard.PublicKey");
+	if (!option) {
+		DBG("WireGuard.PublicKey is missing");
+		return -EINVAL;
+	}
+	err = parse_key(option, info->peer->public_key);
+	if (err) {
+		DBG("Failed to parse public key");
+		return err;
+	}
+
+	option = vpn_provider_get_string(info->provider,
+						"WireGuard.PresharedKey");
+	if (option) {
+		info->peer->flags |= WGPEER_HAS_PRESHARED_KEY;
+		err = parse_key(option, info->peer->preshared_key);
+		if (err) {
+			DBG("Failed to parse pre-shared key");
+			return err;
+		}
+	}
+
+	option = vpn_provider_get_string(info->provider,
+						"WireGuard.AllowedIPs");
+	if (!option) {
+		DBG("WireGuard.AllowedIPs is missing");
+		return -EINVAL;
+	}
+	err = parse_allowed_ips(option, info->peer, do_split_routing);
+	if (err) {
+		DBG("Failed to parse allowed IPs %s", option);
+		return err;
+	}
+
+	option = vpn_provider_get_string(info->provider,
+					"WireGuard.PersistentKeepalive");
+	if (option) {
+		char *end;
+		info->peer->persistent_keepalive_interval =
+			g_ascii_strtoull(option, &end, 10);
+		info->peer->flags |= WGPEER_HAS_PERSISTENT_KEEPALIVE_INTERVAL;
+	}
+
+	option = vpn_provider_get_string(info->provider,
+					"WireGuard.EndpointPort");
+	if (!option)
+		option = "51820";
+
+	endpoint = vpn_provider_get_string(info->provider, "Host");
+	/*
+	 * Use the resolve timeout only with re-resolve. Here the network
+	 * is setup as the transport is used. In succeeding attempts resolving
+	 * is needed as it is done over potentially misconfigured WireGuard
+	 * connection that may end up blocking vpnd with getaddrinfo().
+	 */
+	err = parse_endpoint_hostname(endpoint, option, info->peer, gateway4,
+					gateway6);
+	if (err) {
+		DBG("Failed to parse endpoint %s:%s", endpoint, option);
+		return err;
+	}
+
+	family = connman_inet_check_ipaddress(endpoint);
+	if (family != AF_INET && family != AF_INET6) {
+		DBG("start DNS reresolve for %s", endpoint);
+
+		info->resolv = g_try_new0(struct wg_peer_resolv, 1);
+		if (!info->resolv) {
+			DBG("failed to allocate new resolv");
+			return -ENOMEM;
+		}
+
+		info->resolv->endpoint_fqdn = g_strdup(endpoint);
+		info->resolv->port = g_strdup(option);
+		info->resolv->id = 0;
+	}
+
+	return 0;
+}
+
 static int wg_connect(struct vpn_provider *provider,
 			struct connman_task *task, const char *if_name,
 			vpn_provider_connect_cb_t cb,
@@ -813,13 +1097,12 @@ static int wg_connect(struct vpn_provider *provider,
 	struct wg_ipaddresses ipaddresses = { 0 };
 	struct wireguard_info *info;
 	const char *option;
-	const char *endpoint;
-	char *gateway = NULL;
+	char *gateway4 = NULL;
+	char *gateway6 = NULL;
 	char *ifname;
 	bool do_split_routing = true;
 	bool disable_ipv6 = false;
 	int err = -EINVAL;
-	int family;
 
 	info = create_private_data(provider);
 
@@ -860,149 +1143,19 @@ static int wg_connect(struct vpn_provider *provider,
 	 * Endpoint, EndpointPort
 	 */
 	option = vpn_provider_get_string(provider, "WireGuard.PeerCount");
-	int peerCount = 0;
-	int failedPeers = 0;
+	if (!option) {
+		err = create_singlepeer(info, &do_split_routing, &gateway4,
+					&gateway6);
+	} else {
+		char *end;
+		int peercount = g_ascii_strtoull(option, &end, 10);
+		err = create_multipeer(info, peercount, &do_split_routing,
+					&gateway4,&gateway6);
+	}
 
-	if (!option)
-		peerCount = 1;
-
-	for (int i = 0; i < peerCount; i++) {
-		struct wg_peer *peer = info->peer;
-		struct wg_peer_resolv *resolv = info->resolv;
-
-		/* First one */
-		if (!peer) {
-			info->peer = g_try_new0(struct wg_peer, 1);
-			if (!info->peer) {
-				err = -ENOMEM;
-				DBG("Failed to allocate new #%d wg_peer", i);
-				goto error;
-			}
-
-			info->peer->flags = WGPEER_HAS_PUBLIC_KEY |
-						WGPEER_REPLACE_ALLOWEDIPS;
-			info->device.first_peer = info->peer;
-			info->device.last_peer = info->peer;
-
-			info->resolv = g_try_new0(struct wg_peer_resolv, 1);
-			if (!info->resolv) {
-				err = -ENOMEM;
-				DBG("failed to allocate new resolv for #%d", i);
-				goto error;
-			}
-
-			peer = info->peer;
-			resolv = info->resolv;
-		/* Allocate next ones */
-		} else if (!peer->next_peer) {
-			peer->next_peer = g_try_new0(struct wg_peer, 1);
-			if (!peer->next_peer) {
-				err = -ENOMEM;
-				DBG("Failed to allocate new #%d wg_peer", i);
-				goto error;
-			}
-
-			/* Add data to next and set it as last */
-			peer = peer->next_peer;
-			peer->flags = WGPEER_HAS_PUBLIC_KEY |
-						WGPEER_REPLACE_ALLOWEDIPS;
-			info->device.last_peer = peer;
-
-			resolv->next = g_try_new0(struct wg_peer_resolv, 1);
-			if (!resolv->next) {
-				err = -ENOMEM;
-				DBG("failed to allocate new resolv for #%d", i);
-				goto error;
-			}
-			resolv = resolv->next;
-		} else {
-			failedPeers++;
-			DBG("using skipped peer, failed: %d", failedPeers);
-		}
-
-		char *str = get_peer_string(i, "PublicKey");
-
-		option = vpn_provider_get_string(provider, str);
-		if (!option) {
-			DBG("%s is missing", str);
-			g_free(str);
-			continue;
-		}
-
-		g_free(str);
-
-		err = parse_key(option, peer->public_key);
-		if (err) {
-			DBG("Failed to parse public key");
-			continue;
-		}
-
-		str = get_peer_string(i, "PresharedKey");
-		option = vpn_provider_get_string(provider, str);
-		g_free(str);
-
-		if (option) {
-			peer->flags |= WGPEER_HAS_PRESHARED_KEY;
-			err = parse_key(option, peer->preshared_key);
-			if (err) {
-				DBG("Failed to parse pre-shared key");
-				continue;
-			}
-		}
-
-		str = get_peer_string(i, "AllowedIPs");
-		option = vpn_provider_get_string(provider, str);
-		if (!option) {
-			DBG("%s is missing", str);
-			g_free(str);
-			continue;
-		}
-		g_free(str);
-
-		err = parse_allowed_ips(option, peer, &do_split_routing);
-		if (err) {
-			DBG("Failed to parse allowed IPs %s", option);
-			continue;
-		}
-
-		str = get_peer_string(i, "PersistentKeepalive");
-		option = vpn_provider_get_string(provider, str);
-		if (option) {
-			char *end;
-			peer->persistent_keepalive_interval =
-				g_ascii_strtoull(option, &end, 10);
-			peer->flags |= WGPEER_HAS_PERSISTENT_KEEPALIVE_INTERVAL;
-		}
-
-		g_free(str);
-
-		str = get_peer_string(i, "EndpointPort");
-		option = vpn_provider_get_string(provider, str);
-		if (!option)
-			option = "51820";
-		g_free(str);
-
-		str = get_peer_string(i, "Endpoint");
-		endpoint = vpn_provider_get_string(provider, str);
-		/*
-		 * Use the resolve timeout only with re-resolve. Here the
-		 * network is setup as the transport is used. In succeeding
-		 * attempts resolving is needed as it is done over potentially
-		 * misconfigured WireGuard connection that may end up blocking
-		 * vpnd with getaddrinfo().
-		 */
-		err = parse_endpoint_hostname(endpoint, option, peer, &gateway);
-		if (err) {
-			DBG("Failed to parse endpoint %s:%s", endpoint, option);
-			g_free(str);
-			continue;
-		}
-
-		g_free(str);
-
-		resolv->endpoint_fqdn = g_strdup(endpoint);
-		resolv->port = g_strdup(option);
-		resolv->id = i;
+	if (err) {
+		DBG("Failed to setup peer(s)");
+		goto error;
 	}
 
 	vpn_provider_set_boolean(provider, "SplitRouting", do_split_routing,
@@ -1014,13 +1167,14 @@ static int wg_connect(struct vpn_provider *provider,
 		goto error;
 	}
 
-	err = parse_addresses(option, gateway, &ipaddresses);
+	err = parse_addresses(option, gateway4, gateway6, &ipaddresses);
 	if (err) {
-		DBG("Failed to parse addresses %s gateway %s",
-						option, gateway);
+		DBG("Failed to parse addresses %s gatewayv4 %s gateway v6 %s",
+						option, gateway4, gateway6);
 		goto error;
 	}
-	g_free(gateway);
+	g_free(gateway4);
+	g_free(gateway6);
 
 	ifname = get_ifname();
 	if (!ifname) {
@@ -1033,7 +1187,7 @@ static int wg_connect(struct vpn_provider *provider,
 
 	err = wg_add_device(info->device.name);
 	if (err) {
-		DBG("Failed to creating WireGuard device %s", info->device.name);
+		DBG("Failed to create WireGuard device %s", info->device.name);
 		goto done;
 	}
 
@@ -1074,16 +1228,9 @@ done:
 		/* Run DNS reresolve only for hostnames that require resolve. */
 		struct wg_peer_resolv *r;
 		for (r = info->resolv; r; r = r->next) {
-			family = connman_inet_check_ipaddress(
-							r->endpoint_fqdn);
-			if (family != AF_INET && family != AF_INET6) {
-				DBG("start DNS reresolve for %s",
-							r->endpoint_fqdn);
-
-				r->data.info = info;
-				r->data.resolv = r;
-				run_dns_reresolve(&r->data);
-			}
+			r->data.info = info;
+			r->data.resolv = r;
+			run_dns_reresolve(&r->data);
 		}
 
 		run_route_setup(info, ROUTE_SETUP_TIMEOUT);
