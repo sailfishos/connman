@@ -266,6 +266,10 @@ static void append_route(DBusMessageIter *iter, void *user_data)
 		connman_dbus_dict_append_basic(&item, "Gateway",
 					DBUS_TYPE_STRING, &route->gateway);
 
+	DBG("family %d network %s netmask %s gateway %s", family,
+					route->network, route->netmask,
+					route->gateway);
+
 empty_dict:
 	connman_dbus_dict_close(iter, &item);
 }
@@ -3520,9 +3524,6 @@ int vpn_provider_append_route_complete(struct vpn_provider *provider,
 
 	if (!netmask || !network)
 		return -EINVAL;
-
-	if (g_hash_table_lookup(provider->routes, GINT_TO_POINTER(idx)))
-		return -EALREADY;
 
 	route = g_new0(struct vpn_route, 1);
 	route->family = family;
