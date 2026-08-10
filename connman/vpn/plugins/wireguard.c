@@ -349,13 +349,21 @@ struct wg_ipaddresses {
 
 static char *cidr_to_netmask(int family, unsigned char cidr)
 {
+	uint32_t mask;
+
 	switch (family) {
 	case AF_INET:
-		return g_strdup_printf("%d.%d.%d.%d",
-				((0xffffffff << (32 - cidr)) >> 24) & 0xff,
-				((0xffffffff << (32 - cidr)) >> 16) & 0xff,
-				((0xffffffff << (32 - cidr)) >> 8) & 0xff,
-				((0xffffffff << (32 - cidr)) >> 0) & 0xff);
+		/* Avoid undefined behavior with 32bit shifting. */
+		if (cidr == 0)
+			mask = 0;
+		else
+			mask = 0xffffffffu << (32 - cidr);
+
+		return g_strdup_printf("%u.%u.%u.%u",
+				(mask >> 24) & 0xff,
+				(mask >> 16) & 0xff,
+				(mask >> 8) & 0xff,
+				(mask >> 0) & 0xff);
 
 	case AF_INET6:
 		return g_strdup_printf("%u", cidr);
