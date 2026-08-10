@@ -712,12 +712,6 @@ static gboolean wg_route_setup_cb(gpointer user_data)
 	info->route_setup_id = 0;
 
 	wg_for_each_peer(&info->device, peer) {
-		if (!endpoint_to_str(peer, endpoint, INET6_ADDRSTRLEN)) {
-			connman_warn("Cannot setup WireGuard routes, endpoint "
-								"failure");
-			return G_SOURCE_REMOVE;
-		}
-
 		wg_for_each_allowedip(peer, allowedip) {
 			memset(&addr, 0, INET6_ADDRSTRLEN);
 
@@ -750,7 +744,7 @@ static gboolean wg_route_setup_cb(gpointer user_data)
 
 			vpn_provider_append_route_complete(info->provider, idx,
 							allowedip->family, addr,
-							netmask, endpoint);
+							netmask, NULL);
 
 			g_free(netmask);
 			++idx;
@@ -1169,7 +1163,7 @@ static int wg_connect(struct vpn_provider *provider,
 
 	err = parse_addresses(option, gateway4, gateway6, &ipaddresses);
 	if (err) {
-		DBG("Failed to parse addresses %s gatewayv4 %s gateway v6 %s",
+		DBG("Failed to parse addresses %s gateway v4 %s gateway v6 %s",
 						option, gateway4, gateway6);
 		goto error;
 	}
