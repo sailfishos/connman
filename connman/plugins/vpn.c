@@ -1138,6 +1138,9 @@ static int provider_disconnect(struct connman_provider *provider)
 		data->call = NULL;
 	}
 
+	g_hash_table_remove_all(data->server_routes);
+	g_hash_table_remove_all(data->user_routes);
+
 	data->connect_pending = false;
 
 	return err;
@@ -1554,6 +1557,8 @@ static bool check_host(char **hosts, char *host)
 
 static void set_route(struct connection_data *data, struct vpn_route *route)
 {
+	int err;
+
 	/*
 	 * If the VPN administrator/user has given a route to
 	 * VPN server, then we must discard that because the
@@ -1579,14 +1584,29 @@ static void set_route(struct connection_data *data, struct vpn_route *route)
 	if (route->family == AF_INET6) {
 		unsigned char prefix_len = atoi(route->netmask);
 
-		connman_inet_add_ipv6_network_route(data->index,
+		err = connman_inet_add_ipv6_network_route(data->index,
+							route->network,
+							route->gateway,
+							prefix_len);
+		if (err)
+			DBG("err %d failed to add IPv6 route index %d "
+					"network %s gateway %s prefix_len %c",
+							err, data->index,
 							route->network,
 							route->gateway,
 							prefix_len);
 	} else {
-		connman_inet_add_network_route(data->index, route->network,
-						route->gateway,
-						route->netmask);
+		err = connman_inet_add_network_route(data->index,
+							route->network,
+							route->gateway,
+							route->netmask);
+		if (err)
+			DBG("err %d failed to add IPv4 route index %d "
+					"network %s gateway %s netmask %s",
+							err, data->index,
+							route->network,
+							route->gateway,
+							route->netmask);
 	}
 }
 
@@ -1747,6 +1767,8 @@ static void add_default_route(struct connection_data *data, int family,
 							char *ipaddr_any)
 {
 	int err;
+
+	DBG("add default route %s for IP family %d", ipaddr_any, family);
 
 	err = save_route(data->server_routes, family, ipaddr_any, ipaddr_any,
 					NULL);
