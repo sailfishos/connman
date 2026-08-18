@@ -29,6 +29,24 @@ int __connman_device_request_scan(enum connman_service_type type)
 	return 0;
 }
 
+enum connman_device_type __connman_device_string2type(const char *str)
+{
+	if (!g_strcmp0(str,"ethernet"))
+		return CONNMAN_DEVICE_TYPE_ETHERNET;
+	if (!g_strcmp0(str,"wifi"))
+		return CONNMAN_DEVICE_TYPE_WIFI;
+	if (!g_strcmp0(str,"bluetooth"))
+		return CONNMAN_DEVICE_TYPE_BLUETOOTH;
+	if (!g_strcmp0(str,"gps"))
+		return CONNMAN_DEVICE_TYPE_GPS;
+	if (!g_strcmp0(str,"cellular"))
+		return CONNMAN_DEVICE_TYPE_CELLULAR;
+	if (!g_strcmp0(str,"gadget"))
+		return CONNMAN_DEVICE_TYPE_GADGET;
+
+	return CONNMAN_DEVICE_TYPE_UNKNOWN;
+}
+
 int __connman_ipconfig_ipv6_set_privacy(struct connman_ipconfig *ipconfig,
 		const char *value)
 {
@@ -414,7 +432,7 @@ static char *config_ok[] = {
 	"AutoConnectRoamingServices = true",
 	"AddressConflictDetection = true",
 	"UseGatewaysAsTimeservers = true",
-	"FallbackDeviceTypes = rndis0:gadget,usb0:p2p",
+	"FallbackDeviceTypes = rndis0:gadget,usb0:ethernet",
 	"EnableLoginManager = true",
 	"Localtime = /var/local/lib/localtime",
 	"RegdomFollowsTimezone = true",
@@ -570,7 +588,7 @@ static void setting_test_basic0(void)
 	g_assert_cmpstr(__connman_setting_get_fallback_device_type("rndis0"),
 					==, "gadget");
 	g_assert_cmpstr(__connman_setting_get_fallback_device_type("usb0"),
-					==, "p2p");
+					==, "ethernet");
 
 	g_assert_true(connman_setting_get_bool(CONF_ENABLE_LOGIN_MANAGER));
 	g_assert_cmpstr(connman_setting_get_string(CONF_LOCALTIME), ==,
@@ -713,7 +731,7 @@ static void setting_test_basic1(void)
 	g_assert_cmpstr(__connman_setting_get_fallback_device_type("rndis0"),
 					==, "gadget");
 	g_assert_cmpstr(__connman_setting_get_fallback_device_type("usb0"),
-					==, "p2p");
+					==, "ethernet");
 
 	g_assert_true(connman_setting_get_bool("EnableLoginManager"));
 	g_assert_cmpstr(connman_setting_get_string("Localtime"), ==,

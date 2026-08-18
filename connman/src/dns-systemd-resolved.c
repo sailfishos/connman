@@ -36,7 +36,6 @@
 
 #define SYSTEMD_RESOLVED_SERVICE "org.freedesktop.resolve1"
 #define SYSTEMD_RESOLVED_PATH "/org/freedesktop/resolve1"
-#define SYSTEMD_RESOLVED_SERVER "127.0.0.53"
 
 struct resolved_dbus_data {
 	int index;
@@ -469,13 +468,13 @@ int __connman_dnsproxy_add_listener(int index)
 		return err;
 
 	lo_index = connman_inet_ifindex("lo");
-	err = dns_create_server(lo_index, "local", SYSTEMD_RESOLVED_SERVER,
-								IPPROTO_UDP);
+
+	err = dns_create_server(lo_index, "local", DNS_BACKEND_V4, IPPROTO_UDP);
 	if (err)
 		return err;
 
-	err = dns_enable_server(lo_index, SYSTEMD_RESOLVED_SERVER, IPPROTO_UDP,
-								true);
+
+	err = dns_enable_server(lo_index, DNS_BACKEND_V4, IPPROTO_UDP, true);
 	if (err)
 		return err;
 
