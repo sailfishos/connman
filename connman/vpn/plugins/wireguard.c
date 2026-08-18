@@ -183,7 +183,8 @@ static int parse_allowed_ips(const char *allowed_ips, wg_peer *peer,
 	for (i = 0; tokens[i]; i++) {
 		toks = g_strsplit(tokens[i], "/", -1);
 		if (g_strv_length(toks) != 2) {
-			DBG("Ignore AllowedIPs value \"%s\", length %d", tokens[i], g_strv_length(toks));
+			DBG("Ignore AllowedIPs value \"%s\", length %d",
+						tokens[i], g_strv_length(toks));
 			g_strfreev(toks);
 			continue;
 		}
@@ -836,15 +837,19 @@ static void run_route_setup(struct wireguard_info *info, guint timeout)
 static int create_multipeer(struct wireguard_info *info, int peercount,
 		bool *do_split_routing, char **gateway4, char **gateway6)
 {
+	struct wg_peer *peer;
 	const char *option;
 	const char *endpoint;
+	bool split_routing = true;
 	int family;
 	int failedPeers = 0;
 	int err = 0;
 	int i;
 
-	for (i = 0; i < peercount; i++) {
-		struct wg_peer *peer = info->peer;
+	if (!info || !do_split_routing)
+		return -EINVAL;
+
+	for (i = 0, peer = info->peer; i < peercount; i++) {
 		struct wg_peer_resolv *resolv;
 		char *str;
 
@@ -877,7 +882,7 @@ static int create_multipeer(struct wireguard_info *info, int peercount,
 			peer->flags = WGPEER_HAS_PUBLIC_KEY |
 						WGPEER_REPLACE_ALLOWEDIPS;
 			info->device.last_peer = peer;
-		/* Last one failed, reuse the peer */
+		/* Previous one failed, reuse the peer */
 		} else {
 			failedPeers++;
 			DBG("using skipped peer, failed: %d", failedPeers);
@@ -921,7 +926,7 @@ static int create_multipeer(struct wireguard_info *info, int peercount,
 		}
 		g_free(str);
 
-		err = parse_allowed_ips(option, peer, do_split_routing);
+		err = parse_allowed_ips(option, peer, &split_routing);
 		if (err) {
 			DBG("Failed to parse allowed IPs %s", option);
 			continue;
@@ -960,6 +965,16 @@ static int create_multipeer(struct wireguard_info *info, int peercount,
 		if (err) {
 			DBG("Failed to parse endpoint %s:%s", endpoint, option);
 			continue;
+		}
+
+		/*
+		 * Split routing is disabled if one of the addresses is being
+		 * used as a default route. Only one should have the default
+		 * route set. Do this when all peer checks have passed.
+		*/
+		if (!split_routing) {
+			DBG("Peer #%d is set as default route", i);
+			*do_split_routing = false;
 		}
 
 		family = connman_inet_check_ipaddress(endpoint);
@@ -1153,7 +1168,7 @@ static int wg_connect(struct vpn_provider *provider,
 		char *end;
 		int peercount = g_ascii_strtoull(option, &end, 10);
 		err = create_multipeer(info, peercount, &do_split_routing,
-					&gateway4,&gateway6);
+					&gateway4, &gateway6);
 	}
 
 	if (err) {
