@@ -1169,12 +1169,14 @@ static char *conf_wifi_ok2[] = {
 	"[General]",
 	"WifiWPA3Support = none",
 	"WifiWPA3SAEPWE = both",
+	NULL
 };
 
 static char *conf_wifi_invalid0[] = {
 	"[General]",
 	"WifiWPA3Support = nothing",
 	"WifiWPA3SAEPWE = HuntNPeck",
+	NULL
 };
 
 static void setting_test_wifi_options0(void)
