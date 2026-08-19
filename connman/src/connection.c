@@ -168,6 +168,12 @@ static void get_gateway_cb(const char *gateway, int index, void *user_data)
 	else
 		goto out;
 
+	if (!config) {
+		connman_warn("no config for IP family %d, gw %s not set "
+					"for index %d", family, gateway, index);
+		goto out;
+	}
+
 	config->vpn_phy_index = index;
 
 	DBG("vpn %s phy index %d", config->vpn_ip, config->vpn_phy_index);
