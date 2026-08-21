@@ -4,6 +4,7 @@
  *  for SailfishOS MDM.
  *
  *  Copyright (C) 2017-2020  Jolla Ltd. All rights reserved.
+ *  Copyright (C) 2026 Jolla Mobile Ltd
  *  Contact: Jussi Laakkonen <jussi.laakkonen@jolla.com>
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -28,6 +29,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <syslog.h>
 
 #include "src/connman.h"
 #include "include/iptables_ext.h"
@@ -137,6 +139,51 @@ struct ipt_entry {
 	gint i;
 };
 
+#define MAX_TEST_RULES 8
+
+static const gchar *const default_test_chains[] = {
+	"INPUT",
+	NULL
+};
+
+static const gchar *const oem_test_chains[] = {
+	"INPUT",
+	"oem_in",
+	NULL
+};
+
+static const gchar *const *test_chains = default_test_chains;
+static const gchar *const *test_rule_targets = NULL;
+static struct ipt_entry test_rule_entries[MAX_TEST_RULES];
+static guint test_deleted_rules[MAX_TEST_RULES];
+static guint test_deleted_rule_count = 0;
+static guint test_flushed_chain_count = 0;
+static guint test_new_chain_count = 0;
+static guint test_append_count = 0;
+static guint test_invalid_policy_error_count = 0;
+
+static void reset_iptables_dummies(void)
+{
+	test_chains = default_test_chains;
+	test_rule_targets = NULL;
+	test_deleted_rule_count = 0;
+	test_flushed_chain_count = 0;
+	test_new_chain_count = 0;
+	test_append_count = 0;
+	test_invalid_policy_error_count = 0;
+}
+
+static void test_connman_log_hook(const struct connman_debug_desc *desc,
+				int priority, const char *format, va_list va)
+{
+	(void)desc;
+	(void)va;
+
+	if (priority == LOG_ERR && !g_strcmp0(format,
+			"iptables_restore_table() Invalid policy %s"))
+		test_invalid_policy_error_count++;
+}
+
 int xtables_load_ko(const char *name, bool value)
 {
 	return 0;
@@ -222,24 +269,54 @@ const char* iptc_first_chain(struct xtc_handle *handle)
 	if (!handle)
 		return NULL;
 
-	return "INPUT";
+	handle->i = 0;
+	return test_chains[handle->i];
 }
 
 const char* iptc_next_chain(struct xtc_handle *handle)
 {
-	return NULL;
+	if (!handle)
+		return NULL;
+
+	return test_chains[++handle->i];
 }
 
 const struct ipt_entry *iptc_first_rule(const char *chain,
 	struct xtc_handle *handle)
 {
-	return NULL;
+	guint i;
+
+	if (g_strcmp0(chain, "INPUT") || !handle || !test_rule_targets ||
+					!test_rule_targets[0])
+		return NULL;
+
+	for (i = 0; i < MAX_TEST_RULES && test_rule_targets[i]; i++)
+		test_rule_entries[i].i = i;
+
+	return test_rule_entries;
 }
 
 const struct ipt_entry *iptc_next_rule(const struct ipt_entry *prev,
 	struct xtc_handle *handle)
 {
-	return NULL;
+	guint next;
+
+	if (!prev || !handle || !test_rule_targets)
+		return NULL;
+
+	next = prev->i + 1;
+	return next < MAX_TEST_RULES && test_rule_targets[next] ?
+					&test_rule_entries[next] : NULL;
+}
+
+const char *iptc_get_target(const struct ipt_entry *entry,
+	struct xtc_handle *handle)
+{
+	if (!entry || !handle || !test_rule_targets || entry->i < 0 ||
+					entry->i >= (gint)MAX_TEST_RULES)
+		return NULL;
+
+	return test_rule_targets[entry->i];
 }
 
 int iptc_is_chain(const char *chain, struct xtc_handle *handle)
@@ -263,6 +340,18 @@ int iptc_flush_entries(const char* chain, struct xtc_handle *handle)
 	if (!check_chain(chain) || !handle)
 		return 0;
 
+	test_flushed_chain_count++;
+	return 1;
+}
+
+int iptc_delete_num_entry(const char *chain, unsigned int rule_num,
+	struct xtc_handle *handle)
+{
+	if (!check_chain(chain) || !handle ||
+					test_deleted_rule_count >= MAX_TEST_RULES)
+		return 0;
+
+	test_deleted_rules[test_deleted_rule_count++] = rule_num;
 	return 1;
 }
 
@@ -309,6 +398,8 @@ int __connman_iptables_append(int type,
 				const char *chain,
 				const char *rule_spec)
 {
+	test_append_count++;
+
 	if (!check_table(table_name) || !check_chain(chain) ||
 		!rule_spec || !*rule_spec)
 		return -1;
@@ -362,6 +453,8 @@ int __connman_iptables_new_chain(int type,
 				const char *table_name,
 				const char *chain)
 {
+	test_new_chain_count++;
+
 	if (!check_table(table_name) || !check_chain(chain))
 		return -1;
 
@@ -744,6 +837,39 @@ static void test_iptables_save_ok()
 	cleanup_test_directory(test_path);
 }
 
+static void test_iptables_save_skips_oem_rules()
+{
+	static const gchar *const oem_rule_targets[] = {
+		"oem_in",
+		NULL
+	};
+	gchar *contents = NULL;
+	gchar *rule_path;
+	gchar *test_path = setup_test_directory();
+
+	g_assert(test_path);
+	reset_iptables_dummies();
+	g_assert_cmpint(__connman_storage_init(test_path, ".local", 0700,
+								0600), ==, 0);
+
+	test_chains = oem_test_chains;
+	test_rule_targets = oem_rule_targets;
+
+	g_assert_cmpint(iptables_save("filter"), ==, 0);
+
+	rule_path = g_strconcat(test_path, "/connman/iptables/filter.v4",
+					NULL);
+	g_assert(g_file_get_contents(rule_path, &contents, NULL, NULL));
+	g_assert_nonnull(g_strstr_len(contents, -1, ":INPUT "));
+	g_assert_null(g_strstr_len(contents, -1, "oem_"));
+
+	g_free(contents);
+	g_free(rule_path);
+	reset_iptables_dummies();
+	__connman_storage_cleanup();
+	cleanup_test_directory(test_path);
+}
+
 static void test_iptables_restore_fail()
 {
 	char* test_path = setup_test_directory();
@@ -778,6 +904,34 @@ static void test_iptables_clear_fail()
 
 	g_assert(connman_iptables_clear("filter") == 0);
 
+	__connman_storage_cleanup();
+	cleanup_test_directory(test_path);
+}
+
+static void test_iptables_clear_preserves_oem_rules()
+{
+	static const gchar *const mixed_rule_targets[] = {
+		"ACCEPT",
+		"oem_in",
+		"DROP",
+		NULL
+	};
+	gchar *test_path = setup_test_directory();
+
+	g_assert(test_path);
+	reset_iptables_dummies();
+	g_assert_cmpint(__connman_storage_init(test_path, ".local", 0700,
+								0600), ==, 0);
+
+	test_rule_targets = mixed_rule_targets;
+	g_assert_cmpint(connman_iptables_clear("filter"), ==, 0);
+
+	g_assert_cmpuint(test_flushed_chain_count, ==, 0);
+	g_assert_cmpuint(test_deleted_rule_count, ==, 2);
+	g_assert_cmpuint(test_deleted_rules[0], ==, 3);
+	g_assert_cmpuint(test_deleted_rules[1], ==, 1);
+
+	reset_iptables_dummies();
 	__connman_storage_cleanup();
 	cleanup_test_directory(test_path);
 }
@@ -1167,6 +1321,43 @@ static void test_iptables_restore_rules_3()
 	cleanup_test_directory(test_path);
 }
 
+static void test_iptables_restore_skips_oem_rules()
+{
+	const char rules[] = "# Generated by test\n*filter\n"
+		":INPUT ACCEPT [0:0]\n"
+		":oem_in - [0:0]\n"
+		"-A INPUT -j oem_in\n"
+		"-A oem_in -j ACCEPT\n"
+		"-A INPUT -j ACCEPT\n"
+		"COMMIT\n# Completed";
+	gchar *rule_path;
+	gchar *test_path = setup_test_directory();
+	GString *str;
+	connman_log_hook_cb_t saved_log_hook = connman_log_hook;
+
+	g_assert(test_path);
+	reset_iptables_dummies();
+	rule_path = g_strconcat(test_path, "/connman/iptables/filter.v4",
+					NULL);
+	str = g_string_new(rules);
+
+	g_assert_cmpint(__connman_storage_init(test_path, ".local", 0700,
+								0600), ==, 0);
+	g_assert_cmpint(iptables_set_file_contents(rule_path, str, true), ==, 0);
+	connman_log_hook = test_connman_log_hook;
+	g_assert_cmpint(iptables_restore("filter"), ==, 0);
+	connman_log_hook = saved_log_hook;
+
+	g_assert_cmpuint(test_new_chain_count, ==, 0);
+	g_assert_cmpuint(test_append_count, ==, 1);
+	g_assert_cmpuint(test_invalid_policy_error_count, ==, 0);
+
+	g_free(rule_path);
+	reset_iptables_dummies();
+	__connman_storage_cleanup();
+	cleanup_test_directory(test_path);
+}
+
 int main(int argc, char **argv)
 {
 	int rval = 0;
@@ -1194,8 +1385,12 @@ int main(int argc, char **argv)
 
 	g_test_add_func(PREFIX "/save_fail", test_iptables_save_fail);
 	g_test_add_func(PREFIX "/save_ok", test_iptables_save_ok);
+	g_test_add_func(PREFIX "/save_skips_oem_rules",
+				test_iptables_save_skips_oem_rules);
 	g_test_add_func(PREFIX "/restore_fail", test_iptables_restore_fail);
 	g_test_add_func(PREFIX "/clear_fail", test_iptables_clear_fail);
+	g_test_add_func(PREFIX "/clear_preserves_oem_rules",
+				test_iptables_clear_preserves_oem_rules);
 
 	g_test_add_func(PREFIX "/stdout_capture",
 				test_iptables_stdout_capture);
@@ -1235,6 +1430,8 @@ int main(int argc, char **argv)
 	g_test_add_func(PREFIX "rules_2", test_iptables_restore_rules_2);
 
 	g_test_add_func(PREFIX "rules_3", test_iptables_restore_rules_3);
+	g_test_add_func(PREFIX "/restore_skips_oem_rules",
+				test_iptables_restore_skips_oem_rules);
 
 	rval =  g_test_run();
 

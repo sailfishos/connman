@@ -5,6 +5,7 @@
  *  functionality.
  *
  *  Copyright (C) 2017-2018 Jolla Ltd. All rights reserved.
+ *  Copyright (C) 2026 Jolla Mobile Ltd
  *  Contact: Jussi Laakkonen <jussi.laakkonen@jolla.com>
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -178,6 +179,19 @@ static gboolean str_has_connman_prefix(const gchar* str)
 		return false;
 
 	return g_str_has_prefix(str,"connman-");
+}
+
+static gboolean str_has_oem_prefix(const gchar* str)
+{
+	if(!str)
+		return false;
+
+	return g_str_has_prefix(str, "oem_");
+}
+
+static gboolean str_has_ignored_prefix(const gchar* str)
+{
+	return str_has_connman_prefix(str) || str_has_oem_prefix(str);
 }
 
 static gboolean str_contains_connman(const gchar* str)
@@ -750,8 +764,8 @@ static int iptables_save_table(const char *fpath, GString** output,
 	 * thereby preventing dependency conflicts */
 	for (chain = iptc_first_chain(h); chain; chain = iptc_next_chain(h)) {
 
-		// Skip chains with connman prefix
-		if(str_has_connman_prefix(chain))
+		// Skip chains managed by ConnMan or the device vendor
+		if(str_has_ignored_prefix(chain))
 			continue;
 
 		g_string_append_printf(line,":%s ", chain);
@@ -771,14 +785,15 @@ static int iptables_save_table(const char *fpath, GString** output,
 	for (chain = iptc_first_chain(h); chain; chain = iptc_next_chain(h)) {
 		const struct ipt_entry *e = NULL;
 
-		// Skip chains with connman prefix
-		if(str_has_connman_prefix(chain))
+		// Skip chains managed by ConnMan or the device vendor
+		if(str_has_ignored_prefix(chain))
 			continue;
 
 		/* Dump out rules */
 		e = iptc_first_rule(chain, h);
 		while (e) {
-			print_iptables_rule(line, e, h, chain, 0);
+			if (!str_has_ignored_prefix(iptc_get_target(e, h)))
+				print_iptables_rule(line, e, h, chain, 0);
 			e = iptc_next_rule(e, h);
 		}
 	}
@@ -796,6 +811,44 @@ static int iptables_save_table(const char *fpath, GString** output,
 		return iptables_set_file_contents(fpath, line, true);
 	else
 		return 0;
+}
+
+static int iptables_clear_chain(const char *chain, struct xtc_handle *h)
+{
+	const struct ipt_entry *entry;
+	GSList *delete_rules = NULL;
+	GSList *list;
+	guint rule_num = 1; /* libiptc rule numbers are one-based */
+	gboolean has_oem_rule = false;
+	gint rval = 0;
+
+	for (entry = iptc_first_rule(chain, h); entry;
+					entry = iptc_next_rule(entry, h), rule_num++) {
+		if (str_has_oem_prefix(iptc_get_target(entry, h))) {
+			has_oem_rule = true;
+		} else {
+			/* Prepending gives the descending order needed when the
+			 * numbered rules are deleted below. */
+			delete_rules = g_slist_prepend(delete_rules,
+						GUINT_TO_POINTER(rule_num));
+		}
+	}
+
+	if (!has_oem_rule) {
+		g_slist_free(delete_rules);
+		return iptc_flush_entries(chain, h) ? 0 : 1;
+	}
+
+	/* Keep live OEM hooks installed and ahead of rules restored from the
+	 * persisted snapshot. */
+	for (list = delete_rules; list; list = list->next) {
+		if (!iptc_delete_num_entry(chain,
+					GPOINTER_TO_UINT(list->data), h))
+			rval = 1;
+	}
+
+	g_slist_free(delete_rules);
+	return rval;
 }
 
 static int iptables_clear_table(const char *table_name)
@@ -819,11 +872,11 @@ static int iptables_clear_table(const char *table_name)
 
 	for (chain = iptc_first_chain(h); chain; chain = iptc_next_chain(h)) {
 
-		// Skip chains with connman prefix
-		if (str_has_connman_prefix(chain))
+		// Keep chains managed by ConnMan or the device vendor
+		if (str_has_ignored_prefix(chain))
 			continue;
 
-		if (!iptc_flush_entries(chain,h))
+		if (iptables_clear_chain(chain, h))
 			rval = 1;
 	}
 
@@ -904,9 +957,11 @@ static int iptables_parse_policy(const gchar* table_name, const gchar* policy)
 
 	if (tokens && g_strv_length(tokens) == policy_tokens) {
 
-		// Check chain for connman prefix
-		if(str_has_connman_prefix(tokens[0]))
+		// Ignore chains managed by ConnMan or the device vendor
+		if(str_has_ignored_prefix(tokens[0])) {
+			rval = 0;
 			goto out;
+		}
 
 		gchar** counter_tokens = g_strsplit_set(tokens[2], "[:]", -1);
 
@@ -1016,12 +1071,12 @@ static int iptables_parse_rule(const gchar* table_name, gchar* rule)
 	if (argc < 4 || !argv[0][0])
 		goto out;
 
-	/* Discard all rules that have prefix "connman-" in chain name or
-	 * target name. Chain = token[1], target = last token.
+	/* Discard rules owned by ConnMan or the device vendor. Chain is
+	 * token[1], target is the last token.
 	 */
-	if (str_has_connman_prefix(argv[1]) ||
-		str_has_connman_prefix(argv[argc - 1])) {
-		DBG("Skipping connman rule \"%s\"", rule);
+	if (str_has_ignored_prefix(argv[1]) ||
+		str_has_ignored_prefix(argv[argc - 1])) {
+		DBG("Skipping managed rule \"%s\"", rule);
 		rval = 0; // Not an error situation
 		goto out;
 	}
@@ -1626,4 +1681,3 @@ struct iptables_content* connman_iptables_get_content(const char *table_name)
 
 	return content;
 }
-
