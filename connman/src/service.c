@@ -9742,6 +9742,30 @@ const char *__connman_service_create(enum connman_service_type type,
 	return service->path;
 }
 
+static enum connman_service_type ident2type(const char *ident)
+{
+	char *type_str;
+	char *pos;
+	enum connman_service_type type;
+
+	if (!ident)
+		return CONNMAN_SERVICE_TYPE_UNKNOWN;
+
+	pos = strchr(ident, '_');
+	/* No underscore or the ident starts with one -> invalid */
+	if (!pos || pos == ident)
+		return CONNMAN_SERVICE_TYPE_UNKNOWN;
+
+	type_str = g_strndup(ident, pos - ident);
+	if (!type_str)
+		return CONNMAN_SERVICE_TYPE_UNKNOWN;
+
+	type = __connman_service_string2type(type_str);
+	g_free(type_str);
+
+	return type;
+}
+
 static void load_wifi_service(const char *ident)
 {
 	struct connman_service *service =
@@ -9759,29 +9783,28 @@ static void load_wifi_service(const char *ident)
 static gboolean load_wifi_services(gpointer unused)
 {
 	char **services = connman_storage_get_services();
+	int i;
 
 	load_wifi_services_id = 0;
 
-	if (services) {
-		int i;
+	if (!services)
+		return G_SOURCE_REMOVE;
 
-		for (i = 0; services[i]; i++) {
-			const char *ident = services[i];
-			const enum connman_service_type type =
-				__connman_service_string2type(ident);
+	for (i = 0; services[i]; i++) {
+		const char *ident = services[i];
+		const enum connman_service_type type = ident2type(ident);
+		bool loaded = g_hash_table_contains(service_hash, ident);
 
-			DBG("service %d:%s", i, services[i]);
+		DBG("service %d:%s", i, services[i]);
 
-			if (type == CONNMAN_SERVICE_TYPE_WIFI &&
-				!g_hash_table_contains(service_hash, ident))
-				load_wifi_service(ident);
-			else if (g_hash_table_contains(service_hash, ident))
-				DBG("is in hash table, not loaded");
-		}
-
-		g_strfreev(services);
-		service_list_sort();
+		if (type == CONNMAN_SERVICE_TYPE_WIFI && !loaded)
+			load_wifi_service(ident);
+		else if (loaded)
+			DBG("is in hash table, not loaded");
 	}
+
+	g_strfreev(services);
+	service_list_sort();
 
 	return G_SOURCE_REMOVE;
 }
