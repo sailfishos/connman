@@ -838,55 +838,41 @@ static int create_multipeer(struct wireguard_info *info, int peercount,
 		bool *do_split_routing, char **gateway4, char **gateway6)
 {
 	struct wg_peer *peer;
+	struct wg_peer_resolv *resolv;
 	const char *option;
 	const char *endpoint;
 	bool split_routing = true;
 	int family;
-	int failedPeers = 0;
 	int err = 0;
 	int i;
 
 	if (!info || !do_split_routing)
 		return -EINVAL;
 
-	for (i = 0, peer = info->peer; i < peercount; i++) {
-		struct wg_peer_resolv *resolv;
+	resolv = info->resolv;
+
+	for (i = 0, peer = info->peer, resolv = info->resolv; i < peercount;
+									i++) {
+		enum wg_peer_flags flags;
 		char *str;
+		guint64 persistent_keepalive_interval = 0;
+
+		if (!peer) {
+			peer = g_try_new0(struct wg_peer, 1);
+			if (!peer) {
+				err = -ENOMEM;
+				DBG("Failed to allocate new #%d wg_peer", i);
+				break;
+			}
+		}
 
 		/* First one */
-		if (!peer) {
-			info->peer = g_try_new0(struct wg_peer, 1);
-			if (!info->peer) {
-				err = -ENOMEM;
-				DBG("Failed to allocate new #%d wg_peer", i);
-				break;
-			}
-
-			info->peer->flags = WGPEER_HAS_PUBLIC_KEY |
-						WGPEER_REPLACE_ALLOWEDIPS;
-			info->device.first_peer = info->peer;
-			info->device.last_peer = info->peer;
-
-			peer = info->peer;
-		/* Allocate next ones */
-		} else if (!peer->next_peer) {
-			peer->next_peer = g_try_new0(struct wg_peer, 1);
-			if (!peer->next_peer) {
-				err = -ENOMEM;
-				DBG("Failed to allocate new #%d wg_peer", i);
-				break;
-			}
-
-			/* Add data to next and set it as last */
-			peer = peer->next_peer;
-			peer->flags = WGPEER_HAS_PUBLIC_KEY |
-						WGPEER_REPLACE_ALLOWEDIPS;
-			info->device.last_peer = peer;
-		/* Previous one failed, reuse the peer */
-		} else {
-			failedPeers++;
-			DBG("using skipped peer, failed: %d", failedPeers);
+		if (!info->peer) {
+			info->peer = peer;
+			info->device.first_peer = peer;
 		}
+
+		info->device.last_peer = peer;
 
 		str = get_wg_opt("PublicKey", true, i);
 		option = vpn_provider_get_string(info->provider, str);
@@ -904,17 +890,19 @@ static int create_multipeer(struct wireguard_info *info, int peercount,
 			continue;
 		}
 
+		flags = WGPEER_HAS_PUBLIC_KEY | WGPEER_REPLACE_ALLOWEDIPS;
+
 		str = get_wg_opt("PresharedKey", true, i);
 		option = vpn_provider_get_string(info->provider, str);
 		g_free(str);
 
 		if (option) {
-			peer->flags |= WGPEER_HAS_PRESHARED_KEY;
 			err = parse_key(option, peer->preshared_key);
 			if (err) {
 				DBG("Failed to parse pre-shared key");
 				continue;
 			}
+			flags |= WGPEER_HAS_PRESHARED_KEY;
 		}
 
 		str = get_wg_opt("AllowedIPs", true, i);
@@ -935,10 +923,16 @@ static int create_multipeer(struct wireguard_info *info, int peercount,
 		str = get_wg_opt("PersistentKeepalive", true, i);
 		option = vpn_provider_get_string(info->provider, str);
 		if (option) {
-			char *end;
-			peer->persistent_keepalive_interval =
-				g_ascii_strtoull(option, &end, 10);
-			peer->flags |= WGPEER_HAS_PERSISTENT_KEEPALIVE_INTERVAL;
+			persistent_keepalive_interval =
+					g_ascii_strtoull(option, NULL, 10);
+			if (persistent_keepalive_interval > G_MAXUINT16) {
+				connman_warn("persistent keepalive interval "
+						"%"PRIu64" overflow",
+						persistent_keepalive_interval);
+				persistent_keepalive_interval = 0;
+			} else {
+				flags |= WGPEER_HAS_PERSISTENT_KEEPALIVE_INTERVAL;
+			}
 		}
 
 		g_free(str);
@@ -967,6 +961,13 @@ static int create_multipeer(struct wireguard_info *info, int peercount,
 			continue;
 		}
 
+		/* All values checked, set the flags and continue to next. */
+		peer->flags = flags;
+		peer->persistent_keepalive_interval =
+					(uint16_t)persistent_keepalive_interval;
+
+		peer = peer->next_peer;
+
 		/*
 		 * Split routing is disabled if one of the addresses is being
 		 * used as a default route. Only one should have the default
@@ -979,28 +980,24 @@ static int create_multipeer(struct wireguard_info *info, int peercount,
 
 		family = connman_inet_check_ipaddress(endpoint);
 		if (family != AF_INET && family != AF_INET6) {
-			DBG("start DNS reresolve for %s", endpoint);
-			resolv = info->resolv;
+			DBG("setup DNS reresolve for %s", endpoint);
 
 			if (!resolv) {
-				info->resolv = g_try_new0(struct wg_peer_resolv,
-								1);
-				resolv = info->resolv;
+				resolv = info->resolv =
+					g_try_new0(struct wg_peer_resolv, 1);
 			} else {
-				resolv->next = g_try_new0(struct wg_peer_resolv,
-								1);
-				resolv = resolv->next;
+				resolv = resolv->next =
+					g_try_new0(struct wg_peer_resolv, 1);
 			}
 
 			if (!resolv) {
 				err = -ENOMEM;
 				DBG("failed to allocate new resolv for #%d", i);
-				return -ENOMEM;
+			} else {
+				resolv->endpoint_fqdn = g_strdup(endpoint);
+				resolv->port = g_strdup(option);
+				resolv->id = i;
 			}
-
-			resolv->endpoint_fqdn = g_strdup(endpoint);
-			resolv->port = g_strdup(option);
-			resolv->id = i;
 		}
 	}
 
@@ -1244,11 +1241,11 @@ done:
 
 	if (!err) {
 		/* Run DNS reresolve only for hostnames that require resolve. */
-		struct wg_peer_resolv *r;
-		for (r = info->resolv; r; r = r->next) {
-			r->data.info = info;
-			r->data.resolv = r;
-			run_dns_reresolve(&r->data);
+		struct wg_peer_resolv *resolv;
+		for (resolv = info->resolv; resolv; resolv = resolv->next) {
+			resolv->data.info = info;
+			resolv->data.resolv = resolv;
+			run_dns_reresolve(&resolv->data);
 		}
 
 		run_route_setup(info, ROUTE_SETUP_TIMEOUT);
