@@ -333,31 +333,45 @@ static int parse_endpoint_hostname(const char *host, const char *port,
 	addr = (struct sockaddr_u *)&peer->endpoint.addr;
 
 	err = get_endpoint_addr(tokens[0], port, 0, addr);
-	if (!err) {
-		/* In case the endpoint is an host address use the resolved
+	switch (err) {
+	case 0:
+		/*
+		 * In case the endpoint is an host address use the resolved
 		 * IP address as gateway for DNS over WireGuard to work.
 		 */
 		if (connman_inet_check_ipaddress(tokens[0]) <= 0)
 			gw = endpoint_to_str(peer, buf, INET6_ADDRSTRLEN);
 
-		DBG("success");
+		DBG("valid host, gateway %s", gw ? gw : tokens[0]);
+		break;
+	case -EINVAL:
+		DBG("invalid host %s", tokens[0]);
+		goto out;
+	case -EHOSTUNREACH:
+		DBG("cannot connect %s", tokens[0]);
+		goto out;
+	default:
+		break;
 	}
 
 	switch (peer->endpoint.addr.sa_family) {
 	case AF_INET:
-		*gateway4_resolved = gw ? g_strdup(gw) : g_strdup(tokens[0]);
-		*gateway6_resolved = NULL;
+		if (!*gateway4_resolved)
+			*gateway4_resolved = gw ?
+					g_strdup(gw) : g_strdup(tokens[0]);
 		break;
 	case AF_INET6:
-		*gateway4_resolved = NULL;
-		*gateway6_resolved = gw ? g_strdup(gw) : g_strdup(tokens[0]);
+		if (!*gateway6_resolved)
+			*gateway6_resolved = gw ?
+					g_strdup(gw) : g_strdup(tokens[0]);
 		break;
 	default:
-		DBG("invalid or no family set, set to both?");
-		*gateway4_resolved = gw ? g_strdup(gw) : g_strdup(tokens[0]);
-		*gateway6_resolved = gw ? g_strdup(gw) : g_strdup(tokens[0]);
+		DBG("invalid IP family set %d", peer->endpoint.addr.sa_family);
+		err = -EINVAL;
+		break;
 	}
 
+out:
 	g_strfreev(tokens);
 
 	return err;
