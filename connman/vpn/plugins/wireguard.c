@@ -900,7 +900,7 @@ static int create_multipeer(struct wireguard_info *info, int peercount,
 
 		err = parse_key(option, peer->public_key);
 		if (err) {
-			DBG("Failed to parse public key");
+			DBG("Failed to parse peer #%d public key", i);
 			continue;
 		}
 
@@ -913,7 +913,8 @@ static int create_multipeer(struct wireguard_info *info, int peercount,
 		if (option) {
 			err = parse_key(option, peer->preshared_key);
 			if (err) {
-				DBG("Failed to parse pre-shared key");
+				DBG("Failed to parse peer #%d pre-shared key",
+									i);
 				continue;
 			}
 			flags |= WGPEER_HAS_PRESHARED_KEY;
@@ -922,7 +923,7 @@ static int create_multipeer(struct wireguard_info *info, int peercount,
 		str = get_wg_opt("AllowedIPs", true, i);
 		option = vpn_provider_get_string(info->provider, str);
 		if (!option) {
-			DBG("%s is missing", str);
+			DBG("peer #%d %s is missing", i, str);
 			g_free(str);
 			continue;
 		}
@@ -930,7 +931,8 @@ static int create_multipeer(struct wireguard_info *info, int peercount,
 
 		err = parse_allowed_ips(option, peer, &split_routing);
 		if (err) {
-			DBG("Failed to parse allowed IPs %s", option);
+			DBG("Failed to parse peer #%d allowed IPs %s", i,
+									option);
 			continue;
 		}
 
@@ -971,7 +973,8 @@ static int create_multipeer(struct wireguard_info *info, int peercount,
 		err = parse_endpoint_hostname(endpoint, option, peer, gateway4,
 						gateway6);
 		if (err) {
-			DBG("Failed to parse endpoint %s:%s", endpoint, option);
+			DBG("Failed to parse peer #%d endpoint %s:%s", i,
+							endpoint, option);
 			continue;
 		}
 
@@ -994,7 +997,8 @@ static int create_multipeer(struct wireguard_info *info, int peercount,
 
 		family = connman_inet_check_ipaddress(endpoint);
 		if (family != AF_INET && family != AF_INET6) {
-			DBG("setup DNS reresolve for %s", endpoint);
+			DBG("setup DNS reresolve for peer #%d endpoint %s", i,
+								endpoint);
 
 			if (!resolv) {
 				resolv = info->resolv =
