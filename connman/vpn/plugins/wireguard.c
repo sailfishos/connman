@@ -136,6 +136,7 @@ static struct wireguard_info *create_private_data(struct vpn_provider *provider)
 static void free_private_data(struct wireguard_info *info)
 {
 	struct wg_peer_resolv *resolv;
+	struct wg_allowedip *allowedip;
 	struct wg_peer *peer;
 	int i = 0;
 
@@ -146,9 +147,7 @@ static void free_private_data(struct wireguard_info *info)
 
 	resolv = info->resolv;
 	while (resolv) {
-		struct wg_peer_resolv *tmp_resolv;
-
-		tmp_resolv = resolv;
+		struct wg_peer_resolv *tmp_resolv = resolv;
 		resolv = resolv->next;
 
 		DBG("free resolv for peer #%d", tmp_resolv->id);
@@ -159,9 +158,15 @@ static void free_private_data(struct wireguard_info *info)
 
 	peer = info->peer;
 	while (peer) {
-		struct wg_peer *tmp_peer;
-		tmp_peer = peer;
+		struct wg_peer *tmp_peer = peer;
 		peer = peer->next_peer;
+
+		allowedip = tmp_peer->first_allowedip;
+		while (allowedip) {
+			struct wg_allowedip *tmp_allowedip = allowedip;
+			allowedip = allowedip->next_allowedip;
+			g_free(tmp_allowedip);
+		}
 
 		DBG("free peer #%d", i);
 		g_free(tmp_peer);
@@ -1118,9 +1123,8 @@ static int create_singlepeer(struct wireguard_info *info,
 	option = vpn_provider_get_string(info->provider,
 					"WireGuard.PersistentKeepalive");
 	if (option) {
-		char *end;
 		info->peer->persistent_keepalive_interval =
-			g_ascii_strtoull(option, &end, 10);
+			g_ascii_strtoull(option, NULL, 10);
 		info->peer->flags |= WGPEER_HAS_PERSISTENT_KEEPALIVE_INTERVAL;
 	}
 
