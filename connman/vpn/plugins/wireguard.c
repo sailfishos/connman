@@ -285,12 +285,26 @@ static int get_endpoint_addr(const char *host, const char *port, int flags,
 
 	err = getaddrinfo(host, port, &hints, &result);
 	if (err) { /* Any non-zero return from getaddrinfo is an error */
-		DBG("Failed to resolve host address: %s", gai_strerror(err));
+		DBG("Failed to resolve host address: %d/%s", err, gai_strerror(err));
 
 		if (result)
 			freeaddrinfo(result);
 
-		return -EINVAL;
+		/* Differentiate between most common errors */
+		switch (err) {
+		case EAI_AGAIN:
+			/* Temporary error */
+			return -EAGAIN;
+		case EAI_NONAME:
+			/* Service is not known = invalid name */
+			return -EINVAL;
+		case EAI_FAIL:
+			/* Permanent error on this DNS server. */
+			return -EHOSTUNREACH;
+		default:
+			/* Memory allocation or invalid parameters */
+			return -EFAULT;
+		}
 	}
 
 	for (rp = result; rp; rp = rp->ai_next) {
@@ -386,6 +400,12 @@ static int parse_endpoint_hostname(const char *host, const char *port,
 		goto out;
 	case -EHOSTUNREACH:
 		DBG("cannot connect %s", tokens[0]);
+		goto out;
+	case -EAGAIN:
+		DBG("temporary error in resolving %s", tokens[0]);
+		goto out;
+	case -EFAULT:
+		DBG("terminal error - should not happen");
 		goto out;
 	default:
 		break;
@@ -895,11 +915,13 @@ static int create_multipeer(struct wireguard_info *info, int peercount,
 	const char *endpoint;
 	bool split_routing = true;
 	int family;
-	int err = 0;
+	int *errs;
 	int i;
 
 	if (!info || !do_split_routing)
 		return -EINVAL;
+
+	errs = g_try_new0(int, peercount);
 
 	for (i = 0, peer = info->peer, resolv = info->resolv; i < peercount;
 									i++) {
@@ -910,7 +932,7 @@ static int create_multipeer(struct wireguard_info *info, int peercount,
 		if (!peer) {
 			peer = g_try_new0(struct wg_peer, 1);
 			if (!peer) {
-				err = -ENOMEM;
+				errs[i] = -ENOMEM;
 				DBG("Failed to allocate new #%d wg_peer", i);
 				break;
 			}
@@ -926,8 +948,8 @@ static int create_multipeer(struct wireguard_info *info, int peercount,
 
 		g_free(str);
 
-		err = parse_key(option, peer->public_key);
-		if (err) {
+		errs[i] = parse_key(option, peer->public_key);
+		if (errs[i]) {
 			DBG("Failed to parse peer #%d public key", i);
 			continue;
 		}
@@ -939,8 +961,8 @@ static int create_multipeer(struct wireguard_info *info, int peercount,
 		g_free(str);
 
 		if (option) {
-			err = parse_key(option, peer->preshared_key);
-			if (err) {
+			errs[i] = parse_key(option, peer->preshared_key);
+			if (errs[i]) {
 				DBG("Failed to parse peer #%d pre-shared key",
 									i);
 				continue;
@@ -957,8 +979,8 @@ static int create_multipeer(struct wireguard_info *info, int peercount,
 		}
 		g_free(str);
 
-		err = parse_allowed_ips(option, peer, &split_routing);
-		if (err) {
+		errs[i] = parse_allowed_ips(option, peer, &split_routing);
+		if (errs[i]) {
 			DBG("Failed to parse peer #%d allowed IPs %s", i,
 									option);
 			continue;
@@ -998,11 +1020,14 @@ static int create_multipeer(struct wireguard_info *info, int peercount,
 		 * misconfigured WireGuard connection that may end up blocking
 		 * vpnd with getaddrinfo().
 		 */
-		err = parse_endpoint_hostname(endpoint, option, peer, gateway4,
-						gateway6);
-		if (err) {
-			DBG("Failed to setup peer #%d, endpoint %s:%s is "
-						"invalid", i, endpoint, option);
+		errs[i] = parse_endpoint_hostname(endpoint, option, peer,
+							gateway4, gateway6);
+		if (errs[i] && errs[i] != -EAGAIN) {
+			DBG("Failed to setup peer #%d, endpoint %s:%s %s",
+						i, endpoint, option,
+						errs[i] == -EHOSTUNREACH ?
+						"cannot be connected" :
+						"is invalid");
 			continue;
 		}
 
@@ -1054,7 +1079,7 @@ static int create_multipeer(struct wireguard_info *info, int peercount,
 			}
 
 			if (!resolv) {
-				err = -ENOMEM;
+				errs[i] = -ENOMEM;
 				DBG("failed to allocate new resolv for #%d", i);
 			} else {
 				resolv->endpoint_fqdn = g_strdup(endpoint);
@@ -1064,7 +1089,38 @@ static int create_multipeer(struct wireguard_info *info, int peercount,
 		}
 	}
 
-	return 0;
+	uint8_t success = 0;
+	uint8_t invalid = 0;
+	uint8_t unreach = 0;
+	uint8_t again = 0;
+
+	for (i = 0 ; i < peercount; i++) {
+		switch (errs[i]) {
+		case 0:
+			success++;
+			break;
+		case -EINVAL:
+			invalid++;
+			break;
+		case -EHOSTUNREACH:
+			unreach++;
+			break;
+		case -EAGAIN:
+			again++;
+			break;
+		default:
+			break;
+		}
+	}
+
+	/* At least one peer works or should be retried. */
+	if (success || again)
+		return 0;
+
+	if (unreach && !invalid)
+		return -EHOSTUNREACH;
+
+	return -EINVAL;
 }
 
 static int create_singlepeer(struct wireguard_info *info,
@@ -1142,8 +1198,10 @@ static int create_singlepeer(struct wireguard_info *info,
 	 */
 	err = parse_endpoint_hostname(endpoint, option, info->peer, gateway4,
 					gateway6);
-	if (err) {
-		DBG("Failed to parse endpoint %s:%s", endpoint, option);
+	if (err && err != -EAGAIN) {
+		DBG("Failed to %s endpoint %s:%s", err == -EHOSTUNREACH ?
+					"connect" : "parse", endpoint, option);
+
 		return err;
 	}
 
@@ -1235,7 +1293,7 @@ static int wg_connect(struct vpn_provider *provider,
 	/* Both are supposed to be set as an indication that peers are setup. */
 	if (!err && (!info->device.first_peer || !info->device.last_peer)) {
 		DBG("Failed to setup any peers, mark connection as invalid");
-		err = -EINVAL;
+		err = -EHOSTUNREACH;
 	}
 
 	if (err) {
