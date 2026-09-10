@@ -136,15 +136,36 @@ static struct wireguard_info *create_private_data(struct vpn_provider *provider)
 static void free_private_data(struct wireguard_info *info)
 {
 	struct wg_peer_resolv *resolv;
+	struct wg_peer *peer;
+	int i = 0;
 
 	if (vpn_provider_get_plugin_data(info->provider) == info)
 		vpn_provider_set_plugin_data(info->provider, NULL);
 
 	vpn_provider_unref(info->provider);
 
-	for (resolv = info->resolv; resolv; resolv = resolv->next) {
-		g_free(resolv->endpoint_fqdn);
-		g_free(resolv->port);
+	resolv = info->resolv;
+	while (resolv) {
+		struct wg_peer_resolv *tmp_resolv;
+
+		tmp_resolv = resolv;
+		resolv = resolv->next;
+
+		DBG("free resolv for peer #%d", tmp_resolv->id);
+		g_free(tmp_resolv->endpoint_fqdn);
+		g_free(tmp_resolv->port);
+		g_free(tmp_resolv);
+	}
+
+	peer = info->peer;
+	while (peer) {
+		struct wg_peer *tmp_peer;
+		tmp_peer = peer;
+		peer = peer->next_peer;
+
+		DBG("free peer #%d", i);
+		g_free(tmp_peer);
+		i++;
 	}
 
 	g_free(info);
@@ -852,6 +873,7 @@ static int create_multipeer(struct wireguard_info *info, int peercount,
 		bool *do_split_routing, char **gateway4, char **gateway6)
 {
 	struct wg_peer *peer;
+	struct wg_peer *prev_peer = NULL;
 	struct wg_peer_resolv *resolv;
 	const char *option;
 	const char *endpoint;
@@ -862,8 +884,6 @@ static int create_multipeer(struct wireguard_info *info, int peercount,
 
 	if (!info || !do_split_routing)
 		return -EINVAL;
-
-	resolv = info->resolv;
 
 	for (i = 0, peer = info->peer, resolv = info->resolv; i < peercount;
 									i++) {
@@ -879,14 +899,6 @@ static int create_multipeer(struct wireguard_info *info, int peercount,
 				break;
 			}
 		}
-
-		/* First one */
-		if (!info->peer) {
-			info->peer = peer;
-			info->device.first_peer = peer;
-		}
-
-		info->device.last_peer = peer;
 
 		str = get_wg_opt("PublicKey", true, i);
 		option = vpn_provider_get_string(info->provider, str);
@@ -978,12 +990,29 @@ static int create_multipeer(struct wireguard_info *info, int peercount,
 			continue;
 		}
 
-		/* All values checked, set the flags and continue to next. */
+		/*
+		 * When all values are checked, set the flags and add the peer
+		 * to the list.
+		 */
 		peer->flags = flags;
 		peer->persistent_keepalive_interval =
 					(uint16_t)persistent_keepalive_interval;
 
+		/* Adding the first peer. */
+		if (!info->peer) {
+			info->peer = peer;
+			info->device.first_peer = peer;
+		/* Use the last_peer set previously to add next ones. */
+		} else {
+			prev_peer = info->device.last_peer;
+			if (prev_peer)
+				prev_peer->next_peer = peer;
+		}
+
+		info->device.last_peer = peer;
 		peer = peer->next_peer;
+
+		DBG("successfully added peer #%d", i);
 
 		/*
 		 * Split routing is disabled if one of the addresses is being
