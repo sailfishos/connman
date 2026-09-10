@@ -118,8 +118,8 @@ static char* get_wg_opt(const char *opt, bool peer_option, int index)
 	/* Keep backwards compatibility when single peer mode is in use. */
 	if (peer_option && index >= 0)
 		return g_strdup_printf("WireGuard.Peer%d.%s", index, opt);
-	else
-		return g_strdup_printf("WireGuard.%s", opt);
+
+	return g_strdup_printf("WireGuard.%s", opt);
 }
 
 static struct wireguard_info *create_private_data(struct vpn_provider *provider)
@@ -136,7 +136,6 @@ static struct wireguard_info *create_private_data(struct vpn_provider *provider)
 static void free_private_data(struct wireguard_info *info)
 {
 	struct wg_peer_resolv *resolv;
-	struct wg_allowedip *allowedip;
 	struct wg_peer *peer;
 	int i = 0;
 
@@ -159,14 +158,15 @@ static void free_private_data(struct wireguard_info *info)
 	peer = info->peer;
 	while (peer) {
 		struct wg_peer *tmp_peer = peer;
-		peer = peer->next_peer;
+		struct wg_allowedip *allowedip = peer->first_allowedip;
 
-		allowedip = tmp_peer->first_allowedip;
 		while (allowedip) {
 			struct wg_allowedip *tmp_allowedip = allowedip;
 			allowedip = allowedip->next_allowedip;
 			g_free(tmp_allowedip);
 		}
+
+		peer = peer->next_peer;
 
 		DBG("free peer #%d", i);
 		g_free(tmp_peer);
