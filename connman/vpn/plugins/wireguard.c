@@ -996,8 +996,8 @@ static int create_multipeer(struct wireguard_info *info, int peercount,
 		err = parse_endpoint_hostname(endpoint, option, peer, gateway4,
 						gateway6);
 		if (err) {
-			DBG("Failed to parse peer #%d endpoint %s:%s", i,
-							endpoint, option);
+			DBG("Failed to setup peer #%d, endpoint %s:%s is "
+						"invalid", i, endpoint, option);
 			continue;
 		}
 
@@ -1079,14 +1079,13 @@ static int create_singlepeer(struct wireguard_info *info,
 	}
 
 	info->peer->flags = WGPEER_HAS_PUBLIC_KEY | WGPEER_REPLACE_ALLOWEDIPS;
-	info->device.first_peer = info->peer;
-	info->device.last_peer = info->peer;
 
 	option = vpn_provider_get_string(info->provider, "WireGuard.PublicKey");
 	if (!option) {
 		DBG("WireGuard.PublicKey is missing");
 		return -EINVAL;
 	}
+
 	err = parse_key(option, info->peer->public_key);
 	if (err) {
 		DBG("Failed to parse public key");
@@ -1143,6 +1142,10 @@ static int create_singlepeer(struct wireguard_info *info,
 		DBG("Failed to parse endpoint %s:%s", endpoint, option);
 		return err;
 	}
+
+	/* Set first and last peers after the checks to indicate success. */
+	info->device.first_peer = info->peer;
+	info->device.last_peer = info->peer;
 
 	family = connman_inet_check_ipaddress(endpoint);
 	if (family != AF_INET && family != AF_INET6) {
@@ -1220,10 +1223,15 @@ static int wg_connect(struct vpn_provider *provider,
 		err = create_singlepeer(info, &do_split_routing, &gateway4,
 					&gateway6);
 	} else {
-		char *end;
-		int peercount = g_ascii_strtoull(option, &end, 10);
+		int peercount = g_ascii_strtoull(option, NULL, 10);
 		err = create_multipeer(info, peercount, &do_split_routing,
 					&gateway4, &gateway6);
+	}
+
+	/* Both are supposed to be set as an indication that peers are setup. */
+	if (!err && (!info->device.first_peer || !info->device.last_peer)) {
+		DBG("Failed to setup any peers, mark connection as invalid");
+		err = -EINVAL;
 	}
 
 	if (err) {
