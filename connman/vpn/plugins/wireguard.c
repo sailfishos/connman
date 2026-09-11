@@ -916,6 +916,7 @@ static int create_multipeer(struct wireguard_info *info, int peercount,
 	bool split_routing = true;
 	int family;
 	int *errs;
+	int peer_id;
 	int i;
 
 	if (!info || !do_split_routing)
@@ -925,8 +926,8 @@ static int create_multipeer(struct wireguard_info *info, int peercount,
 	if (!errs)
 		return -ENOMEM;
 
-	for (i = 0, peer = info->peer, resolv = info->resolv; i < peercount;
-									i++) {
+	for (i = 0, peer_id = 0, peer = info->peer, resolv = info->resolv;
+							i < peercount; i++) {
 		enum wg_peer_flags flags;
 		char *str;
 		guint64 persistent_keepalive_interval = 0;
@@ -1055,7 +1056,7 @@ static int create_multipeer(struct wireguard_info *info, int peercount,
 		info->device.last_peer = peer;
 		peer = peer->next_peer;
 
-		DBG("successfully added peer #%d", i);
+		DBG("successfully added peer #%d with id %d", i, peer_id);
 
 		/*
 		 * Split routing is disabled if one of the addresses is being
@@ -1069,8 +1070,8 @@ static int create_multipeer(struct wireguard_info *info, int peercount,
 
 		family = connman_inet_check_ipaddress(endpoint);
 		if (family != AF_INET && family != AF_INET6) {
-			DBG("setup DNS reresolve for peer #%d endpoint %s", i,
-								endpoint);
+			DBG("setup DNS reresolve for peer #%d id %d endpoint %s",
+							i, peer_id, endpoint);
 
 			if (!resolv) {
 				resolv = info->resolv =
@@ -1086,9 +1087,11 @@ static int create_multipeer(struct wireguard_info *info, int peercount,
 			} else {
 				resolv->endpoint_fqdn = g_strdup(endpoint);
 				resolv->port = g_strdup(option);
-				resolv->id = i;
+				resolv->id = peer_id;
 			}
 		}
+
+		peer_id++;
 	}
 
 	uint8_t success = 0;
