@@ -33,6 +33,8 @@
 
 #include <connman/log.h>
 
+#include <glib/gstdio.h>
+
 #include "src/shared/util.h"
 
 void util_debug(util_debug_func_t function, void *user_data,
@@ -181,7 +183,7 @@ static bool is_file_symlink(const char *filename)
 		return true;
 
 	if (fd >= 0)
-		close(fd);
+		g_close(fd, NULL);
 
 	return false;
 }
