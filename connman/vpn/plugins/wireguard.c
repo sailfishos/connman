@@ -922,6 +922,8 @@ static int create_multipeer(struct wireguard_info *info, int peercount,
 		return -EINVAL;
 
 	errs = g_try_new0(int, peercount);
+	if (!errs)
+		return -ENOMEM;
 
 	for (i = 0, peer = info->peer, resolv = info->resolv; i < peercount;
 									i++) {
@@ -1093,6 +1095,7 @@ static int create_multipeer(struct wireguard_info *info, int peercount,
 	uint8_t invalid = 0;
 	uint8_t unreach = 0;
 	uint8_t again = 0;
+	uint8_t nomem = 0;
 
 	for (i = 0 ; i < peercount; i++) {
 		switch (errs[i]) {
@@ -1108,16 +1111,24 @@ static int create_multipeer(struct wireguard_info *info, int peercount,
 		case -EAGAIN:
 			again++;
 			break;
+		case -ENOMEM:
+			nomem++;
+			break;
 		default:
 			break;
 		}
 	}
 
+	g_free(errs);
+
+	if (nomem)
+		return -ENOMEM;
+
 	/* At least one peer works or should be retried. */
 	if (success || again)
 		return 0;
 
-	if (unreach && !invalid)
+	if (unreach && (unreach >= invalid))
 		return -EHOSTUNREACH;
 
 	return -EINVAL;
