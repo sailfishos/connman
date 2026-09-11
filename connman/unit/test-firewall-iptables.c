@@ -1279,16 +1279,17 @@ void g_dir_close (GDir *dir)
 
 static int fd_idx = 0;
 
-int open(const gchar* filename, int flags, int mode)
+int open(const char* filename, int flags, int mode)
 {
 	g_assert(filename);
-
+	DBG("filename %s -> fd %d", filename, fd_idx + 1);
 	return ++fd_idx;
 }
 
-int close(int fd)
+int g_close(int fd, GError **error)
 {
 	g_assert_cmpint(fd, ==, fd_idx);
+	DBG("fd %d", fd);
 	return 0;
 }
 
