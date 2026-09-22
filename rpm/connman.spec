@@ -261,8 +261,6 @@ fi
 %define run_resolv_conf %{connman_run_dir}/resolv.conf
 %define etc_resolv_conf %{_sysconfdir}/resolv.conf
 
-mkdir -p %{connman_run_dir} || :
-
 # Remove the resolv.conf symlink only when it points to ConnMan resolv.conf
 # systemd-resolved will create the link at boot
 if [ -h %{etc_resolv_conf} ] ; then
