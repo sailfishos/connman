@@ -11,6 +11,7 @@ Wants=network.target
 Type=dbus
 BusName=net.connman
 Restart=always
+RuntimeDirectory=connman
 EnvironmentFile=-/etc/sysconfig/connman
 EnvironmentFile=-/var/lib/environment/connman/*.conf
 ExecStart=@sbindir@/connmand -n -W nl80211 --nobacktrace --noplugin=wifi $SYSCONF_ARGS $CONNMAN_ARGS
