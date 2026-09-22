@@ -908,12 +908,40 @@ static gboolean set_security_str(struct connman_service *service,
 
 static void service_set_supported(struct connman_service *service);
 
+static int service_save(struct connman_service *service);
+
+static bool service_convert_eap_phase2(const char *eap, char **phase2)
+{
+	const char *convert_list[] = { "GTC", "MD5", "OTP", "TLS", NULL };
+	char *tmp = NULL;
+	int i;
+
+	if (g_ascii_strcasecmp(eap, "ttls"))
+		return false;
+
+	for (i = 0; convert_list[i] && !tmp; i++) {
+		if (!g_ascii_strcasecmp(*phase2, convert_list[i]))
+			tmp = g_strdup_printf("EAP-%s", convert_list[i]);
+	}
+
+	if (!tmp)
+		return false;
+
+	DBG("converted %s to %s", *phase2, tmp);
+
+	g_free(*phase2);
+	*phase2 = tmp;
+
+	return true;
+}
+
 static void service_apply(struct connman_service *service, GKeyFile *keyfile)
 {
 	GError *error = NULL;
 	gsize length;
 	gchar *str;
 	bool autoconnect;
+	bool need_save = false;
 	unsigned int ssid_len;
 
 	service_set_supported(service);
@@ -1077,6 +1105,11 @@ static void service_apply(struct connman_service *service, GKeyFile *keyfile)
 		service->passphrase = dec;
 	}
 
+	/* Convert old/wrong phase2 methods */
+	if (service->eap && service->phase2)
+		need_save = service_convert_eap_phase2(service->eap,
+							&service->phase2);
+
 	if (service->ipconfig_ipv4)
 		__connman_ipconfig_load(service->ipconfig_ipv4, keyfile,
 					service->identifier, "IPv4.");
@@ -1141,6 +1174,11 @@ static void service_apply(struct connman_service *service, GKeyFile *keyfile)
 					service->identifier, "Hidden", NULL);
 
 	count_available_service_type(service, true);
+
+	if (need_save) {
+		gettimeofday(&service->modified, NULL);
+		service_save(service);
+	}
 }
 
 static int service_load(struct connman_service *service)
