@@ -112,6 +112,8 @@
 #define NETWORK_KEY_WIFI_SAE_CHECK_MFP          "WiFi.SAECheckMFP"
 
 #define NETWORK_EAP_DEFAULT                     "default"
+#define NETWORK_EAP_PREFIX                      "EAP-"
+#define NETWORK_EAP_PREFIX_LEN                  4
 
 #define WMTWIFI_PATH				"/dev/wmtWifi"
 
@@ -1615,6 +1617,203 @@ static gboolean get_wpa3_sae_check_mfp_option(struct connman_network *network)
 	return value;
 }
 
+static GSUPPLICANT_EAP_METHOD get_eap_phase2_method(
+			const GSUPPLICANT_EAP_METHOD eap, const char *phase2,
+			bool eapPrefix)
+{
+	if (!phase2)
+		return GSUPPLICANT_EAP_METHOD_NONE;
+
+	/*
+	 * The IEEE 802.11i methods that are supported by wpa_supplicant: 
+	 * https://git.w1.fi/cgit/hostap/plain/wpa_supplicant/README
+	 * All the listed methods can be used as inner, phase2 EAP method.
+	 * For example, EAP-MD5-Challenge, EAP-MSCHAPv2, EAP-GTC, EAP-OTP
+	 * cannot be used alone, but for phase2 they work.
+	 */
+	switch (eap) {
+	case GSUPPLICANT_EAP_METHOD_TLS:
+		break;
+	case GSUPPLICANT_EAP_METHOD_PEAP:
+		if (!g_ascii_strcasecmp(phase2, "gtc"))
+			return GSUPPLICANT_EAP_METHOD_GTC;
+
+		/* MD5 is deprecated */
+		if (!g_ascii_strcasecmp(phase2, "md5")) {
+			connman_warn("Using PEAP with depreacted MD5");
+			return GSUPPLICANT_EAP_METHOD_MD5;
+		}
+
+		if (!g_ascii_strcasecmp(phase2, "mschapv2"))
+			return GSUPPLICANT_EAP_METHOD_MSCHAPV2;
+
+		if (!g_ascii_strcasecmp(phase2, "otp")) {
+			connman_warn("Using PEAP with legacy EAP-OTP");
+			return GSUPPLICANT_EAP_METHOD_OTP;
+		}
+
+		if (!g_ascii_strcasecmp(phase2, "tls"))
+			return GSUPPLICANT_EAP_METHOD_TLS;
+
+		break;
+	case GSUPPLICANT_EAP_METHOD_TTLS:
+		/* TTLS supports plain CHAP, but not in libgsupplicant */
+		/*if (!g_ascii_strcasecmp(phase2, "chap") && !eapPrefix)
+			return GSUPPLICANT_EAP_METHOD_CHAP;*/
+
+		/*
+		 * TTLS supports only EAP-GTC. In upstream WiFi plugin GTC
+		 * is always used as EAP-prefixed even if the prefix is omitted.
+		 */
+		if (!g_ascii_strcasecmp(phase2, "gtc"))
+			return GSUPPLICANT_EAP_METHOD_GTC;
+
+		/* MD5 is depreacted, only EAP-MD5 is supported. */
+		if (!g_ascii_strcasecmp(phase2, "md5") && eapPrefix) {
+			connman_warn("Using TTLS with depreacted EAP-MD5");
+			return GSUPPLICANT_EAP_METHOD_MD5;
+		}
+
+		/* Both EAP- and plain MSCHAPV2 are supported. */
+		if (!g_ascii_strcasecmp(phase2, "mschapv2")) {
+			if (!eapPrefix)
+				connman_warn("Using TTLS with legacy MSCHAPV2");
+
+			return GSUPPLICANT_EAP_METHOD_MSCHAPV2;
+		}
+
+		/* TTLS supports plain PAP */
+		if (!g_ascii_strcasecmp(phase2, "pap") && !eapPrefix) {
+			connman_warn("Using TTLS with legacy PAP");
+			return GSUPPLICANT_EAP_METHOD_PAP;
+		}
+
+		/* TTLS supports EAP-OTP only */
+		if (!g_ascii_strcasecmp(phase2, "otp") && eapPrefix) {
+			connman_warn("Using TTLS with legacy EAP-OTP");
+			return GSUPPLICANT_EAP_METHOD_OTP;
+		}
+
+		/* TTLS supports EAP-TLS only */
+		if (!g_ascii_strcasecmp(phase2, "tls") && eapPrefix)
+			return GSUPPLICANT_EAP_METHOD_TLS;
+
+		break;
+	default:
+		break;
+	}
+
+	connman_warn("Failed to process EAP type %d phase2 method %s", eap,
+							phase2);
+
+	return GSUPPLICANT_EAP_METHOD_NONE;
+}
+
+static GHashTable *process_eap(struct wifi_network *net,
+			GSupplicantNetworkParams *params, const char *eap)
+{
+	GHashTable *blobs = NULL;
+	const char *value;
+	const char *phase2;
+	bool eapPrefix = false;
+
+	if (!g_ascii_strcasecmp(eap, "tls")) {
+		params->eap = GSUPPLICANT_EAP_METHOD_TLS;
+	} else if (!g_ascii_strcasecmp(eap, "ttls")) {
+		params->eap = GSUPPLICANT_EAP_METHOD_TTLS;
+	} else {
+		if (!g_ascii_strcasecmp(eap, "peapv0")) {
+			params->auth_flags |=
+				GSUPPLICANT_AUTH_PHASE1_PEAPV0;
+		} else if (!g_ascii_strcasecmp(eap, "peapv1")) {
+			params->auth_flags |=
+				GSUPPLICANT_AUTH_PHASE1_PEAPV1;
+		}
+		params->eap = GSUPPLICANT_EAP_METHOD_PEAP;
+	}
+
+	phase2 = connman_network_get_string(net->network,
+						NETWORK_KEY_WIFI_PHASE2);
+	if (phase2 && !g_ascii_strncasecmp(phase2, NETWORK_EAP_PREFIX,
+						NETWORK_EAP_PREFIX_LEN)) {
+		eapPrefix = true;
+		phase2 += NETWORK_EAP_PREFIX_LEN;
+	}
+
+	params->phase2 = get_eap_phase2_method(params->eap, phase2, eapPrefix);
+	if (params->phase2 != GSUPPLICANT_EAP_METHOD_NONE && eapPrefix)
+		params->auth_flags |= GSUPPLICANT_AUTH_PHASE2_AUTHEAP;
+
+	params->identity = connman_network_get_string(net->network,
+				NETWORK_KEY_WIFI_IDENTITY);
+	if (params->identity) {
+		NDBG(net, "identity \"%s\"", params->identity);
+	} else {
+		/* Use WiFi.AgentIdentity as a backup */
+		params->identity =
+			connman_network_get_string(net->network,
+				NETWORK_KEY_WIFI_AGENT_IDENTITY);
+		if (params->identity) {
+			NDBG(net, "agent identity \"%s\"",
+						params->identity);
+			connman_network_set_string(net->network,
+					NETWORK_KEY_WIFI_IDENTITY,
+					params->identity);
+			wifi_network_save_network_param(net,
+					NETWORK_KEY_WIFI_IDENTITY);
+		}
+	}
+
+	if ((value = connman_network_get_string(net->network,
+			NETWORK_KEY_WIFI_CLIENT_CERT))) {
+		params->client_cert_file = "blob://client_cert";
+		wifi_network_init_add_blob(&blobs, "client_cert",
+						value);
+	} else {
+		params->client_cert_file =
+			connman_network_get_string(net->network,
+				NETWORK_KEY_WIFI_CLIENT_CERT_FILE);
+	}
+
+	if ((value = connman_network_get_string(net->network,
+			NETWORK_KEY_WIFI_PRIVATE_KEY))) {
+		params->private_key_file = "blob://private_key";
+		wifi_network_init_add_blob(&blobs, "private_key",
+						value);
+	} else {
+		params->private_key_file =
+			connman_network_get_string(net->network,
+				NETWORK_KEY_WIFI_PRIVATE_KEY_FILE);
+	}
+
+	params->private_key_passphrase =
+		connman_network_get_string(net->network,
+			NETWORK_KEY_WIFI_PRIVATE_KEY_PASSPHRASE);
+
+	if ((value = connman_network_get_string(net->network,
+			NETWORK_KEY_WIFI_CA_CERT))) {
+		params->ca_cert_file = "blob://ca_cert";
+		wifi_network_init_add_blob(&blobs, "ca_cert", value);
+	} else {
+		params->ca_cert_file =
+			connman_network_get_string(net->network,
+				NETWORK_KEY_WIFI_CA_CERT_FILE);
+	}
+
+	params->anonymous_identity = connman_network_get_string(net->network,
+					NETWORK_KEY_WIFI_ANONYMOUS_IDENTITY);
+	params->subject_match = connman_network_get_string(net->network,
+					NETWORK_KEY_WIFI_SUBJECT_MATCH);
+	params->altsubject_match = connman_network_get_string(net->network,
+					NETWORK_KEY_WIFI_ALT_SUBJECT_MATCH);
+	params->domain_suffix_match = connman_network_get_string(net->network,
+					NETWORK_KEY_WIFI_DOMAIN_SUFFIX_MATCH);
+	params->domain_match = connman_network_get_string(net->network,
+					NETWORK_KEY_WIFI_DOMAIN_MATCH);
+
+	return blobs;
+}
+
 static GHashTable *wifi_network_init_connect_params(struct wifi_network *net,
 		struct wifi_bss *bss_data, GSupplicantNetworkParams *params)
 {
@@ -1637,111 +1836,8 @@ static GHashTable *wifi_network_init_connect_params(struct wifi_network *net,
 	}
 
 	eap = connman_network_get_string(net->network, NETWORK_KEY_WIFI_EAP);
-	if (eap) {
-		const char *value;
-
-		if (!g_ascii_strcasecmp(eap, "tls")) {
-			params->eap = GSUPPLICANT_EAP_METHOD_TLS;
-		} else if (!g_ascii_strcasecmp(eap, "ttls")) {
-			params->eap = GSUPPLICANT_EAP_METHOD_TTLS;
-		} else {
-			if (!g_ascii_strcasecmp(eap, "peapv0")) {
-				params->auth_flags |=
-					GSUPPLICANT_AUTH_PHASE1_PEAPV0;
-			} else if (!g_ascii_strcasecmp(eap, "peapv1")) {
-				params->auth_flags |=
-					GSUPPLICANT_AUTH_PHASE1_PEAPV1;
-			}
-			params->eap = GSUPPLICANT_EAP_METHOD_PEAP;
-		}
-		if (params->eap != GSUPPLICANT_EAP_METHOD_TLS ||
-				params->eap != GSUPPLICANT_EAP_METHOD_PEAP) {
-			const char *phase2 =
-				connman_network_get_string(net->network,
-					NETWORK_KEY_WIFI_PHASE2);
-			params->phase2 = !phase2 ?
-				GSUPPLICANT_EAP_METHOD_NONE :
-				!g_ascii_strcasecmp(phase2, "mschapv2") ?
-				GSUPPLICANT_EAP_METHOD_MSCHAPV2 :
-				!g_ascii_strcasecmp(eap, "md5") ?
-				GSUPPLICANT_EAP_METHOD_MD5 :
-				!g_ascii_strcasecmp(eap, "peap") ?
-				GSUPPLICANT_EAP_METHOD_PEAP :
-				!g_ascii_strcasecmp(eap, "tls") ?
-				GSUPPLICANT_EAP_METHOD_TLS :
-				!g_ascii_strcasecmp(eap, "leap") ?
-				GSUPPLICANT_EAP_METHOD_LEAP :
-				!g_ascii_strcasecmp(eap, "gtc") ?
-				GSUPPLICANT_EAP_METHOD_GTC :
-				GSUPPLICANT_EAP_METHOD_NONE;
-		}
-		params->identity = connman_network_get_string(net->network,
-					NETWORK_KEY_WIFI_IDENTITY);
-		if (params->identity) {
-			NDBG(net, "identity \"%s\"", params->identity);
-		} else {
-			/* Use WiFi.AgentIdentity as a backup */
-			params->identity =
-				connman_network_get_string(net->network,
-					NETWORK_KEY_WIFI_AGENT_IDENTITY);
-			if (params->identity) {
-				NDBG(net, "agent identity \"%s\"",
-							params->identity);
-				connman_network_set_string(net->network,
-						NETWORK_KEY_WIFI_IDENTITY,
-						params->identity);
-				wifi_network_save_network_param(net,
-						NETWORK_KEY_WIFI_IDENTITY);
-			}
-		}
-		if ((value = connman_network_get_string(net->network,
-				NETWORK_KEY_WIFI_CLIENT_CERT))) {
-			params->client_cert_file = "blob://client_cert";
-			wifi_network_init_add_blob(&blobs, "client_cert",
-							value);
-		} else {
-			params->client_cert_file =
-				connman_network_get_string(net->network,
-					NETWORK_KEY_WIFI_CLIENT_CERT_FILE);
-		}
-		if ((value = connman_network_get_string(net->network,
-				NETWORK_KEY_WIFI_PRIVATE_KEY))) {
-			params->private_key_file = "blob://private_key";
-			wifi_network_init_add_blob(&blobs, "private_key",
-							value);
-		} else {
-			params->private_key_file =
-				connman_network_get_string(net->network,
-					NETWORK_KEY_WIFI_PRIVATE_KEY_FILE);
-		}
-		params->private_key_passphrase =
-			connman_network_get_string(net->network,
-				NETWORK_KEY_WIFI_PRIVATE_KEY_PASSPHRASE);
-		if ((value = connman_network_get_string(net->network,
-				NETWORK_KEY_WIFI_CA_CERT))) {
-			params->ca_cert_file = "blob://ca_cert";
-			wifi_network_init_add_blob(&blobs, "ca_cert", value);
-		} else {
-			params->ca_cert_file =
-				connman_network_get_string(net->network,
-					NETWORK_KEY_WIFI_CA_CERT_FILE);
-		}
-		params->anonymous_identity =
-			connman_network_get_string(net->network,
-				NETWORK_KEY_WIFI_ANONYMOUS_IDENTITY);
-		params->subject_match =
-			connman_network_get_string(net->network,
-				NETWORK_KEY_WIFI_SUBJECT_MATCH);
-		params->altsubject_match =
-			connman_network_get_string(net->network,
-				NETWORK_KEY_WIFI_ALT_SUBJECT_MATCH);
-		params->domain_suffix_match =
-			connman_network_get_string(net->network,
-				NETWORK_KEY_WIFI_DOMAIN_SUFFIX_MATCH);
-		params->domain_match =
-			connman_network_get_string(net->network,
-				NETWORK_KEY_WIFI_DOMAIN_MATCH);
-	}
+	if (eap)
+		blobs = process_eap(net, params, eap);
 
 	params->passphrase = connman_network_get_string(net->network,
 					NETWORK_KEY_WIFI_PASSPHRASE);
@@ -1752,6 +1848,7 @@ static GHashTable *wifi_network_init_connect_params(struct wifi_network *net,
 		net->last_passphrase = g_strdup(params->passphrase);
 		net->handshake_retries = 0;
 	}
+
 	return blobs;
 }
 
