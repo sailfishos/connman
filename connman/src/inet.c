@@ -971,13 +971,21 @@ out:
 
 int connman_inet_set_ipv6_gateway_interface(int index)
 {
-	struct ifreq ifr;
-	struct rtentry rt;
-	struct sockaddr_in6 addr;
+	struct in6_rtmsg rt = { 0 };
 	const struct in6_addr any = IN6ADDR_ANY_INIT;
+	char *ifname;
 	int sk, err = 0;
 
 	DBG("index %d", index);
+
+	ifname = connman_inet_ifname(index);
+	if (!ifname) {
+		err = -errno;
+		goto out;
+	}
+
+	DBG("ifname %s", ifname);
+	g_free(ifname);
 
 	sk = socket(PF_INET6, SOCK_DGRAM | SOCK_CLOEXEC, 0);
 	if (sk < 0) {
@@ -985,29 +993,13 @@ int connman_inet_set_ipv6_gateway_interface(int index)
 		goto out;
 	}
 
-	memset(&ifr, 0, sizeof(ifr));
-	ifr.ifr_ifindex = index;
-
-	if (ioctl(sk, SIOCGIFNAME, &ifr) < 0) {
-		err = -errno;
-		close(sk);
-		goto out;
-	}
-
-	DBG("ifname %s", ifr.ifr_name);
-
-	memset(&rt, 0, sizeof(rt));
-	rt.rt_flags = RTF_UP;
-
-	memset(&addr, 0, sizeof(addr));
-	addr.sin6_family = AF_INET6;
-	addr.sin6_addr = any;
-
-	memcpy(&rt.rt_genmask, &addr, sizeof(rt.rt_genmask));
-	memcpy(&rt.rt_dst, &addr, sizeof(rt.rt_dst));
-	memcpy(&rt.rt_gateway, &addr, sizeof(rt.rt_gateway));
-
-	rt.rt_dev = ifr.ifr_name;
+	rt.rtmsg_dst = any;
+	rt.rtmsg_src = any;
+	rt.rtmsg_gateway = any;
+	rt.rtmsg_dst_len = 0;
+	rt.rtmsg_src_len = 0;
+	rt.rtmsg_flags = RTF_UP;
+	rt.rtmsg_ifindex = index;
 
 	if (ioctl(sk, SIOCADDRT, &rt) < 0 && errno != EEXIST)
 		err = -errno;
@@ -1133,13 +1125,21 @@ out:
 
 int connman_inet_clear_ipv6_gateway_interface(int index)
 {
-	struct ifreq ifr;
-	struct rtentry rt;
-	struct sockaddr_in6 addr;
+	struct in6_rtmsg rt = { 0 };
 	const struct in6_addr any = IN6ADDR_ANY_INIT;
+	char *ifname;
 	int sk, err = 0;
 
 	DBG("index %d", index);
+
+	ifname = connman_inet_ifname(index);
+	if (!ifname) {
+		err = -errno;
+		goto out;
+	}
+
+	DBG("ifname %s", ifname);
+	g_free(ifname);
 
 	sk = socket(PF_INET6, SOCK_DGRAM | SOCK_CLOEXEC, 0);
 	if (sk < 0) {
@@ -1147,29 +1147,13 @@ int connman_inet_clear_ipv6_gateway_interface(int index)
 		goto out;
 	}
 
-	memset(&ifr, 0, sizeof(ifr));
-	ifr.ifr_ifindex = index;
-
-	if (ioctl(sk, SIOCGIFNAME, &ifr) < 0) {
-		err = -errno;
-		close(sk);
-		goto out;
-	}
-
-	DBG("ifname %s", ifr.ifr_name);
-
-	memset(&rt, 0, sizeof(rt));
-	rt.rt_flags = RTF_UP;
-
-	memset(&addr, 0, sizeof(addr));
-	addr.sin6_family = AF_INET6;
-	addr.sin6_addr = any;
-
-	memcpy(&rt.rt_genmask, &addr, sizeof(rt.rt_genmask));
-	memcpy(&rt.rt_dst, &addr, sizeof(rt.rt_dst));
-	memcpy(&rt.rt_gateway, &addr, sizeof(rt.rt_gateway));
-
-	rt.rt_dev = ifr.ifr_name;
+	rt.rtmsg_dst = any;
+	rt.rtmsg_src = any;
+	rt.rtmsg_gateway = any;
+	rt.rtmsg_dst_len = 0;
+	rt.rtmsg_src_len = 0;
+	rt.rtmsg_flags = RTF_UP;
+	rt.rtmsg_ifindex = index;
 
 	if (ioctl(sk, SIOCDELRT, &rt) < 0 && errno != ESRCH)
 		err = -errno;
