@@ -561,6 +561,7 @@ static int modem_configure(struct modem_data *md)
 	const int index = connman_inet_ifindex(md->connctx->ifname);
 	struct connman_service *service =
 		connman_service_lookup_from_network(md->network);
+	enum connman_ipconfig_method method;
 
 	DBG("ifname %s index %d", md->connctx->ifname, index);
 
@@ -575,11 +576,20 @@ static int modem_configure(struct modem_data *md)
 			ns = modem_configure_ipv4(md->network,
 					md->connctx->settings, ns);
 		} else {
-			DBG("set network %p IPv4 DHCP", md->network);
+			/* When in IPv6 only mode configured put IPv4 off */
+			if (md->connctx->ipv6_settings &&
+					md->connctx->protocol ==
+						OFONO_CONNCTX_PROTOCOL_IPV6) {
+				method = CONNMAN_IPCONFIG_METHOD_OFF;
+				DBG("set network %p IPv4 OFF", md->network);
+			} else {
+				method = CONNMAN_IPCONFIG_METHOD_DHCP;
+				DBG("set network %p IPv4 DHCP", md->network);
+			}
+
 			// Updates ipconfig index
 			connman_service_create_ip4config(service, index);
-			connman_network_set_ipv4_method(md->network,
-					CONNMAN_IPCONFIG_METHOD_DHCP);
+			connman_network_set_ipv4_method(md->network, method);
 		}
 
 		if (md->connctx->ipv6_settings) {
@@ -589,11 +599,19 @@ static int modem_configure(struct modem_data *md)
 			ns = modem_configure_ipv6(md->network,
 					md->connctx->ipv6_settings, ns);
 		} else {
-			DBG("set network %p IPv6 AUTO", md->network);
+			/* When in IPv4 only mode configured put IPv6 off */
+			if (md->connctx->settings && md->connctx->protocol ==
+						OFONO_CONNCTX_PROTOCOL_IP) {
+				method = CONNMAN_IPCONFIG_METHOD_OFF;
+				DBG("set network %p IPv6 OFF", md->network);
+			} else {
+				method = CONNMAN_IPCONFIG_METHOD_AUTO;
+				DBG("set network %p IPv6 AUTO", md->network);
+			}
+
 			// Updates ipconfig index
 			connman_service_create_ip6config(service, index);
-			connman_network_set_ipv6_method(md->network,
-					CONNMAN_IPCONFIG_METHOD_AUTO);
+			connman_network_set_ipv6_method(md->network, method);
 		}
 
 		if (ns) {

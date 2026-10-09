@@ -1710,6 +1710,8 @@ static int nameserver_add_all(struct connman_service *service,
 
 	fallback_dns = connman_setting_get_string_list("FallbackNameservers");
 
+	DBG("service %p type %d", service, type);
+
 	if (service->nameservers_config) {
 		while (service->nameservers_config[i]) {
 			nameserver_add(service, type,
@@ -1731,12 +1733,13 @@ static int nameserver_add_all(struct connman_service *service,
 		int index = __connman_service_get_index(service);
 		const char *dns = __connman_ipconfig_get_gateway_from_index(
 								index, type);
-
-		DBG("No DNS servers or fallback DNS servers set."
+		/* Do not add NULL as a DNS server */
+		if (dns) {
+			DBG("No DNS servers or fallback DNS servers set. "
 						"Use gw %s as DNS", dns);
-		__connman_service_nameserver_append(service, dns, false);
-
-		i++;
+			__connman_service_nameserver_append(service, dns, false);
+			i++;
+		}
 	}
 
 	g_strfreev(fallback_dns);
