@@ -3451,19 +3451,11 @@ int vpn_provider_set_nameservers(struct vpn_provider *provider,
 	 * count for the provider.
 	 */
 	nameserver_list = g_strsplit_set(nameservers, ", ", 0);
-	for (i = 0; nameserver_list[i]; i++) {
-		if (*nameserver_list[i])
-			count++;
-	}
+	if (!nameserver_list)
+		return -ENOMEM;
 
-	if (!count) {
-		g_strfreev(nameserver_list);
-		return 0;
-	}
-
-	DBG("valid nameservers %d", count);
-
-	provider->nameservers = g_try_new0(char*, count + 1);
+	provider->nameservers = g_try_new0(char*,
+					g_strv_length(nameserver_list) + 1);
 	if (!provider->nameservers) {
 		g_strfreev(nameserver_list);
 		return -ENOMEM;
@@ -3475,6 +3467,13 @@ int vpn_provider_set_nameservers(struct vpn_provider *provider,
 
 		provider->nameservers[count] = g_strdup(nameserver_list[i]);
 		count++;
+	}
+
+	DBG("valid nameservers %d", count);
+
+	if (!count) {
+		g_strfreev(provider->nameservers);
+		provider->nameservers = NULL;
 	}
 
 	g_strfreev(nameserver_list);
