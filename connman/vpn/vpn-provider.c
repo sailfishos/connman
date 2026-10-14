@@ -1685,9 +1685,12 @@ static void connect_cb(struct vpn_provider *provider, void *user_data,
 	DBG("provider %p user %p error %d", provider, user_data, error);
 
 	if (error != 0) {
-		DBusMessage *reply = __connman_error_failed(pending, error);
-		if (reply)
-			g_dbus_send_message(connection, reply);
+		if (pending) {
+			DBusMessage *reply = __connman_error_failed(pending,
+									error);
+			if (reply)
+				g_dbus_send_message(connection, reply);
+		}
 
 		switch (error) {
 		case EACCES:
@@ -1736,6 +1739,7 @@ static void connect_cb(struct vpn_provider *provider, void *user_data,
 			 */
 			if (provider->auth_error_counter >=
 						provider->auth_error_limit) {
+				DBG("inform ECONNABORTED");
 				vpn_provider_indicate_error(provider,
 						VPN_PROVIDER_ERROR_CONNECT_FAILED);
 				vpn_provider_set_state(provider,
@@ -1777,10 +1781,13 @@ static void connect_cb(struct vpn_provider *provider, void *user_data,
 		}
 	} else {
 		reset_error_counters(provider);
-		g_dbus_send_reply(connection, pending, DBUS_TYPE_INVALID);
+		if (pending)
+			g_dbus_send_reply(connection, pending,
+							DBUS_TYPE_INVALID);
 	}
 
-	dbus_message_unref(pending);
+	if (pending)
+		dbus_message_unref(pending);
 }
 
 int __vpn_provider_connect(struct vpn_provider *provider, DBusMessage *msg)
@@ -2294,6 +2301,10 @@ int vpn_provider_set_state(struct vpn_provider *provider,
 	case VPN_PROVIDER_STATE_READY:
 		return set_connected(provider, true);
 	case VPN_PROVIDER_STATE_DISCONNECT:
+		if (provider->driver && provider->driver->set_state &&
+				provider->driver->get_flags(provider) &
+					VPN_FLAG_NO_DAEMON)
+			provider->driver->set_state(provider, state);
 		return provider_indicate_state(provider, state);
 	case VPN_PROVIDER_STATE_FAILURE:
 		return provider_indicate_state(provider, state);
