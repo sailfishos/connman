@@ -1312,6 +1312,13 @@ static int provider_load_from_keyfile(struct vpn_provider *provider,
 						provider->identifier,key,
 						&num_user_networks, NULL);
 			provider->user_networks = get_routes(networks);
+		} else if (g_str_equal(key, "SplitRouting")) {
+			value_bool = __vpn_config_get_boolean(keyfile,
+						provider->identifier, key,
+						NULL, false);
+
+			vpn_provider_set_boolean(provider, "SplitRouting",
+						value_bool, false);
 		} else if (g_str_equal(key, "DefaultRoute")) {
 			/*
 			 * DefaultRoute is a legacy setting. This will not be
@@ -1461,6 +1468,9 @@ static int vpn_provider_save(struct vpn_provider *provider)
 	if (value)
 		g_key_file_set_string(keyfile, provider->identifier,
 						"AuthErrorLimit", value);
+
+	g_key_file_set_boolean(keyfile, provider->identifier,
+				"SplitRouting", provider->do_split_routing);
 
 	if (provider->user_networks) {
 		gchar **networks;
