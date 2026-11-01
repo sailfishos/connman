@@ -1491,6 +1491,11 @@ static int provider_write_settings(struct vpn_provider *provider)
 	g_key_file_set_boolean(keyfile, provider->identifier,
 				"SplitRouting", provider->do_split_routing);
 
+	value = vpn_provider_get_string(provider, "VPN.LocalNetworks");
+	if (value)
+		g_key_file_set_string(keyfile, provider->identifier,
+					"VPN.LocalNetworks", value);
+
 	if (provider->user_networks) {
 		gchar **networks;
 		gsize network_count;

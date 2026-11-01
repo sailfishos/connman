@@ -5343,6 +5343,98 @@ void __connman_service_wispr_start(struct connman_service *service,
 static void set_error(struct connman_service *service,
 					enum connman_service_error error);
 
+/*
+ * VPN.LocalNetworks: comma separated Wi-Fi networks on which the VPN is
+ * not usable, e.g. the home Wi-Fi for a VPN to home. An entry is a name
+ * (SSID), optionally followed by "|" and the DHCP domain the network must
+ * also have ("home-wifi|home.lan"), so that another network with the same
+ * name does not match. On such a network the VPN is neither auto
+ * connected nor connected on request, and it is disconnected when the
+ * device moves to such a network.
+ */
+#define VPN_LOCAL_NETWORKS "VPN.LocalNetworks"
+
+static struct connman_service *get_transport_service(void)
+{
+	GList *list;
+
+	for (list = service_list; list; list = list->next) {
+		struct connman_service *service = list->data;
+
+		if (service->type == CONNMAN_SERVICE_TYPE_VPN)
+			continue;
+
+		if (is_connected(service->state))
+			return service;
+	}
+
+	return NULL;
+}
+
+static bool vpn_on_local_network(struct connman_service *vpn,
+					struct connman_service *transport)
+{
+	const char *value;
+	gchar **names;
+	bool found = false;
+	int i;
+
+	if (!vpn || vpn->type != CONNMAN_SERVICE_TYPE_VPN || !vpn->provider ||
+			!transport ||
+			transport->type != CONNMAN_SERVICE_TYPE_WIFI ||
+			!transport->name)
+		return false;
+
+	value = connman_provider_get_string(vpn->provider, VPN_LOCAL_NETWORKS);
+	if (!value || !*value)
+		return false;
+
+	names = g_strsplit(value, ",", 0);
+	for (i = 0; names && names[i] && !found; i++) {
+		gchar **entry = g_strsplit(names[i], "|", 2);
+		const char *domain;
+
+		if (!entry[0] || g_strcmp0(g_strstrip(entry[0]),
+							transport->name)) {
+			g_strfreev(entry);
+			continue;
+		}
+
+		domain = entry[1] ? g_strstrip(entry[1]) : NULL;
+		found = !domain || !*domain || (transport->domainname &&
+				!g_ascii_strcasecmp(domain,
+						transport->domainname));
+		g_strfreev(entry);
+	}
+
+	g_strfreev(names);
+
+	return found;
+}
+
+static void disconnect_vpns_on_local_network(struct connman_service *transport)
+{
+	GList *list;
+
+	for (list = service_list; list; list = list->next) {
+		struct connman_service *service = list->data;
+
+		if (service->type != CONNMAN_SERVICE_TYPE_VPN)
+			continue;
+
+		if (!is_connected(service->state) &&
+					!is_connecting(service->state))
+			continue;
+
+		if (!vpn_on_local_network(service, transport))
+			continue;
+
+		DBG("disconnect VPN %s on local network %s", service->name,
+							transport->name);
+		__connman_service_disconnect(service);
+	}
+}
+
 static DBusMessage *set_property(DBusConnection *conn,
 					DBusMessage *msg, void *user_data)
 {
@@ -5409,7 +5501,12 @@ static DBusMessage *set_property(DBusConnection *conn,
 			service_set_new_service(service, false);
 
 			service_save(service);
-			if (autoconnect)
+			if (autoconnect && vpn_on_local_network(service,
+						get_transport_service())) {
+				/* Connecting from the UI sets AutoConnect */
+				DBG("VPN %s not connected on a local network",
+							service->name);
+			} else if (autoconnect)
 				do_auto_connect(service,
 					CONNMAN_SERVICE_CONNECT_REASON_AUTO);
 			else if (autoconnect_controls_service(service))
@@ -6397,6 +6494,12 @@ static gboolean run_vpn_auto_connect(gpointer data) {
 		if (is_ignore(service) || !service->favorite)
 			continue;
 
+		if (vpn_on_local_network(service, def_service)) {
+			DBG("service %p on local network %s, not connected",
+						service, def_service->name);
+			continue;
+		}
+
 		if (need_split && !service->do_split_routing) {
 			DBG("service %p no split routing", service);
 			continue;
@@ -6700,6 +6803,9 @@ static DBusMessage *connect_service(DBusConnection *conn,
 	}
 	if (err == -EINPROGRESS)
 		return __connman_error_operation_timeout(msg);
+
+	if (vpn_on_local_network(service, get_transport_service()))
+		return __connman_error_permission_denied(msg);
 
 	service->ignore = false;
 
@@ -8575,8 +8681,10 @@ static int service_indicate_state(struct connman_service *service)
 
 		if (connman_setting_get_bool("SingleConnectedTechnology"))
 			single_connected_tech(service);
-		else if (service->type != CONNMAN_SERVICE_TYPE_VPN)
+		else if (service->type != CONNMAN_SERVICE_TYPE_VPN) {
+			disconnect_vpns_on_local_network(service);
 			vpn_auto_connect();
+		}
 
 		break;
 

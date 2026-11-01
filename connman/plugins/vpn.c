@@ -2306,6 +2306,12 @@ static gboolean property_changed(DBusConnection *conn,
 		dbus_message_iter_get_basic(&value, &value_bool);
 		connman_provider_set_ipv6_data_leak_prevention(data->provider,
 								value_bool);
+	} else if (g_str_has_prefix(key, "VPN.LocalNetworks") &&
+				dbus_message_iter_get_arg_type(&value) ==
+							DBUS_TYPE_STRING) {
+		dbus_message_iter_get_basic(&value, &str);
+		g_hash_table_replace(data->setting_strings, g_strdup(key),
+							g_strdup(str));
 	} else if (g_str_equal(key, "AuthErrorLimit")) {
 		data->auth_error_limit = get_dbus_uint32(&value);
 	} else if (g_str_equal(key, "AuthErrors")) {
