@@ -819,6 +819,21 @@ static void request_input_append_username(DBusMessageIter *iter,
 					DBUS_TYPE_STRING, &value);
 }
 
+static void request_input_append_control_string(DBusMessageIter *iter,
+		void *user_data)
+{
+	const char *value = user_data;
+	char *str = "string";
+
+	connman_dbus_dict_append_basic(iter, "Type",
+				DBUS_TYPE_STRING, &str);
+	str = "control";
+	connman_dbus_dict_append_basic(iter, "Requirement",
+				DBUS_TYPE_STRING, &str);
+	connman_dbus_dict_append_basic(iter, "Value",
+				DBUS_TYPE_STRING, &value);
+}
+
 static void request_input_append_password(DBusMessageIter *iter,
 		void *user_data)
 {
@@ -970,6 +985,12 @@ static int request_credentials_input(struct ov_private_data *data)
 								false)) {
 		vpn_agent_append_allow_credential_storage(&dict, false);
 		vpn_agent_append_allow_credential_retrieval(&dict, false);
+
+		/* Tell the user what is asked, see vpn-agent-api.txt */
+		connman_dbus_dict_append_dict(&dict,
+				"OpenVPN.Password.displayName",
+				request_input_append_control_string,
+				"One-time password");
 	}
 
 	/* Request temporary properties to pass on to openvpn */
