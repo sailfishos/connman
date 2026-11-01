@@ -95,6 +95,8 @@ static const char *connect_types[] = {"cookie", "cookie_with_userpass",
 			"userpass", "publickey", "pkcs", NULL};
 static const char *protocols[] = { "anyconnect", "nc", "gp", NULL};
 
+#define OC_MAX_USERPASS_FORMS 3
+
 struct oc_private_data {
 	struct vpn_provider *provider;
 	struct connman_task *task;
@@ -114,6 +116,7 @@ struct oc_private_data {
 	enum oc_connect_type connect_type;
 	bool tried_passphrase;
 	bool group_set;
+	int userpass_forms;
 };
 
 typedef void (*request_input_reply_cb_t) (DBusMessage *reply,
@@ -824,6 +827,22 @@ static gboolean process_auth_form(void *user_data)
 	switch (data->connect_type) {
 	case OC_CONNECT_USERPASS:
 	case OC_CONNECT_COOKIE_WITH_USERPASS:
+		/*
+		 * The same stored credentials are submitted every time the
+		 * server sends the form again. Stop after a few rounds so that
+		 * rejected credentials do not hammer the server (and lock the
+		 * account) in a tight loop.
+		 */
+		if (++data->userpass_forms > OC_MAX_USERPASS_FORMS) {
+			connman_warn("Credentials rejected %d times, giving up",
+						OC_MAX_USERPASS_FORMS);
+			vpn_provider_add_error(data->provider,
+					VPN_PROVIDER_ERROR_AUTH_FAILED);
+			clear_provider_credentials(data->provider, true);
+			data->err = -EACCES;
+			form_data->status = OC_FORM_RESULT_ERR;
+			goto out;
+		}
 		break;
 
 	case OC_CONNECT_PKCS:
