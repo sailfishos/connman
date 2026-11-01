@@ -917,7 +917,15 @@ int __connman_connection_gateway_add(struct connman_service *service,
 	}
 
 	if (!active_gateway) {
-		set_default_gateway(new_gateway, type);
+		/*
+		 * A split routed VPN must not become the default gateway,
+		 * e.g. for IPv6 when the transport gets its default route
+		 * from router advertisements handled by the kernel.
+		 */
+		if (service_type != CONNMAN_SERVICE_TYPE_VPN ||
+				!__connman_service_is_split_routing(service))
+			set_default_gateway(new_gateway, type);
+
 		goto done;
 	}
 
