@@ -980,6 +980,7 @@ static int authenticate(struct oc_private_data *data)
 	const char *cert = NULL;
 	const char *key = NULL;
 	const char *urlpath;
+	const char *protocol;
 	const char *vpnhost;
 	bool disable_ipv6;
 
@@ -1012,6 +1013,13 @@ static int authenticate(struct oc_private_data *data)
 			oc_process_auth_form,
 			oc_progress,
 			data);
+
+	/* Same as openconnect's --protocol, needed before obtaining the cookie */
+	protocol = vpn_provider_get_string(data->provider,
+						"OpenConnect.Protocol");
+	if (protocol && *protocol &&
+			openconnect_set_protocol(data->vpninfo, protocol))
+		connman_warn("Unsupported OpenConnect protocol %s", protocol);
 
 	/* Replicating how openconnect's --usergroup argument works */
 	urlpath = vpn_provider_get_string(data->provider,
