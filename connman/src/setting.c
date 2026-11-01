@@ -907,6 +907,15 @@ static struct config_option config_options[] = {
 		.error_cb = NULL,
 		.multiplier = 0
 	},
+	/* SingleAutoConnectVPN */
+	{
+		.opt_key = CONF_SINGLE_AUTOCONNECT_VPN,
+		.opt_type = CONF_TYPE_BOOL,
+		.opt_return_type = CONF_TYPE_BOOL,
+		.default_val.bool_val = true,
+		.error_cb = NULL,
+		.multiplier = 0
+	},
 	/* SingleConnectedTechnology */
 	{
 		.opt_key = CONF_SINGLE_TECH,
