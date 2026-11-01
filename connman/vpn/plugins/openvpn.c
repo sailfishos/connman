@@ -798,6 +798,20 @@ static void request_input_append_mandatory(DBusMessageIter *iter,
 				DBUS_TYPE_STRING, &str);
 }
 
+static void request_input_append_username(DBusMessageIter *iter,
+		void *user_data)
+{
+	struct vpn_provider *provider = user_data;
+	const char *value;
+
+	request_input_append_mandatory(iter, NULL);
+
+	value = vpn_provider_get_string(provider, "OpenVPN.Username");
+	if (value && *value)
+		connman_dbus_dict_append_basic(iter, "Value",
+					DBUS_TYPE_STRING, &value);
+}
+
 static void request_input_append_password(DBusMessageIter *iter,
 		void *user_data)
 {
@@ -935,9 +949,21 @@ static int request_credentials_input(struct ov_private_data *data)
 	if (vpn_provider_get_authentication_errors(data->provider))
 		vpn_agent_append_auth_failure(&dict, data->provider, NULL);
 
+	/*
+	 * With auth-nocache the password is typically a one-time code
+	 * (e.g. TOTP): the agent must neither store nor replay it, the user
+	 * is asked every time. The username is kept in memory by the
+	 * provider and given as the default value.
+	 */
+	if (vpn_provider_get_boolean(data->provider, "OpenVPN.AuthNoCache",
+								false)) {
+		vpn_agent_append_allow_credential_storage(&dict, false);
+		vpn_agent_append_allow_credential_retrieval(&dict, false);
+	}
+
 	/* Request temporary properties to pass on to openvpn */
 	connman_dbus_dict_append_dict(&dict, "OpenVPN.Username",
-			request_input_append_mandatory, NULL);
+			request_input_append_username, data->provider);
 
 	connman_dbus_dict_append_dict(&dict, "OpenVPN.Password",
 			request_input_append_password, NULL);
