@@ -283,6 +283,15 @@ static int oc_notify(DBusMessage *msg, struct vpn_provider *provider)
 		return VPN_STATE_FAILURE;
 	}
 
+	/*
+	 * openconnect keeps the tunnel up while it reconnects (e.g. after the
+	 * device has been suspended) and reports it with these two reasons.
+	 * They must not be treated as a disconnect.
+	 */
+	if (!strcmp(reason, "attempt-reconnect") ||
+				!strcmp(reason, "reconnect"))
+		return VPN_STATE_UNKNOWN;
+
 	if (strcmp(reason, "connect"))
 		return VPN_STATE_DISCONNECT;
 
