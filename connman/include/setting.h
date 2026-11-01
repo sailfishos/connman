@@ -46,6 +46,7 @@ extern "C" {
 #define CONF_ALLOW_DOMAINNAME_UPDATES           "AllowDomainnameUpdates"
 #define CONF_SINGLE_TECH                        "SingleConnectedTechnology"
 #define CONF_SINGLE_AUTOCONNECT_VPN             "SingleAutoConnectVPN"
+#define CONF_KEEP_VPN_ON_TRANSPORT_CHANGE       "KeepVPNOnTransportChange"
 #define CONF_TETHERING_TECHNOLOGIES             "TetheringTechnologies"
 #define CONF_PERSISTENT_TETHERING_MODE          "PersistentTetheringMode"
 #define CONF_ENABLE_6TO4                        "Enable6to4"

@@ -45,6 +45,7 @@
 #include <connman/vpn-dbus.h>
 #include <connman/inet.h>
 #include <connman/storage.h>
+#include <connman/setting.h>
 #include <gweb/gresolv.h>
 
 #define DBUS_TIMEOUT 10000
@@ -2407,7 +2408,31 @@ static void vpn_disconnect_check_provider(struct connection_data *data)
 						(data->service_ident);
 
 		if (!vpn_is_valid_transport(service)) {
-			connman_provider_disconnect(data->provider);
+			struct connman_service *online;
+
+			if (!connman_setting_get_bool(
+					CONF_KEEP_VPN_ON_TRANSPORT_CHANGE)) {
+				connman_provider_disconnect(data->provider);
+				return;
+			}
+
+			/*
+			 * Keep the VPN: follow the new online transport, or
+			 * wait for one (provider.c disconnects the VPN if
+			 * none comes up in time).
+			 */
+			online = vpn_find_online_transport();
+			if (!online || online == service)
+				return;
+
+			DBG("VPN %s moves to transport %s", data->ident,
+				connman_service_get_identifier(online));
+
+			g_free(data->service_ident);
+			data->service_ident = g_strdup(
+				connman_service_get_identifier(online));
+			connman_provider_set_transport(data->provider,
+								online);
 		}
 	}
 }

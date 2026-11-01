@@ -49,6 +49,7 @@ struct connman_provider {
 	struct connman_provider_driver *driver;
 	void *driver_data;
 	bool ipv6_data_leak_prevention;
+	guint transport_lost_id;
 };
 
 static void provider_set_family(struct connman_provider *provider, int family)
@@ -130,6 +131,9 @@ static void provider_remove(struct connman_provider *provider)
 static void provider_destruct(struct connman_provider *provider)
 {
 	DBG("provider %p", provider);
+
+	if (provider->transport_lost_id)
+		g_source_remove(provider->transport_lost_id);
 
 	g_free(provider->identifier);
 	g_free(provider);
@@ -345,6 +349,12 @@ int connman_provider_disconnect(struct connman_provider *provider)
 	int err;
 
 	DBG("provider %p", provider);
+
+	if (provider->transport_lost_id) {
+		g_source_remove(provider->transport_lost_id);
+		provider->transport_lost_id = 0;
+		connman_provider_unref(provider);
+	}
 
 	if (provider->driver && provider->driver->disconnect)
 		err = provider->driver->disconnect(provider);
@@ -1074,31 +1084,92 @@ void connman_provider_put(struct connman_provider *provider)
 	g_hash_table_remove(provider_hash, provider->identifier);
 }
 
-static struct connman_provider *provider_get(int index)
+/* Time a VPN is kept without transport with KeepVPNOnTransportChange */
+#define VPN_TRANSPORT_GRACE_TIMEOUT 60
+
+static gboolean transport_lost_timeout(gpointer user_data)
 {
-	GHashTableIter iter;
-	gpointer value, key;
+	struct connman_provider *provider = user_data;
 
-	g_hash_table_iter_init(&iter, provider_hash);
+	DBG("provider %p no new transport, disconnecting", provider);
 
-	while (g_hash_table_iter_next(&iter, &key, &value)) {
-		struct connman_provider *provider = value;
+	provider->transport_lost_id = 0;
+	connman_provider_disconnect(provider);
+	connman_provider_unref(provider);
 
-		if (provider->index == index)
-			return provider;
+	return G_SOURCE_REMOVE;
+}
+
+/*
+ * Route the VPN server through the new transport so that the VPN client
+ * can reconnect, and remember it as the physical interface of the VPN.
+ */
+static void move_vpn_to_transport(struct connman_provider *provider,
+					struct connman_service *transport)
+{
+	struct connman_ipconfig *ipconfig;
+	const char *host, *gateway;
+	int index;
+
+	ipconfig = __connman_service_get_ip4config(transport);
+	index = __connman_ipconfig_get_index(ipconfig);
+	host = connman_provider_get_string(provider, "HostIP");
+
+	if (index < 0 || !host ||
+			connman_inet_check_ipaddress(host) != AF_INET)
+		return;
+
+	gateway = __connman_ipconfig_get_gateway_from_index(index,
+						CONNMAN_IPCONFIG_TYPE_IPV4);
+
+	DBG("provider %p server %s via %s index %d", provider, host,
+						gateway, index);
+
+	connman_inet_del_host_route(index, host);
+	connman_inet_add_host_route(index, host, gateway);
+	__connman_connection_set_vpn_phy_index(provider->index, index);
+}
+
+/* Called by the VPN plugin when a VPN is kept on a new transport */
+int connman_provider_set_transport(struct connman_provider *provider,
+					struct connman_service *transport)
+{
+	if (!provider || !transport)
+		return -EINVAL;
+
+	if (provider->transport_lost_id) {
+		g_source_remove(provider->transport_lost_id);
+		provider->transport_lost_id = 0;
+		connman_provider_unref(provider);
 	}
 
-	return NULL;
+	move_vpn_to_transport(provider, transport);
+
+	return 0;
+}
+
+static int get_service_index(struct connman_service *service, int family)
+{
+	struct connman_ipconfig *ipconfig;
+
+	ipconfig = family == AF_INET ?
+			__connman_service_get_ip4config(service) :
+			__connman_service_get_ip6config(service);
+
+	return __connman_ipconfig_get_index(ipconfig);
 }
 
 static void provider_service_changed(struct connman_service *service,
 				enum connman_service_state state)
 {
-	struct connman_provider *provider;
-	struct connman_ipconfig *ipconfig;
-	int vpn_index, service_index;
+	GHashTableIter iter;
+	gpointer key, value;
+	GSList *list = NULL, *item;
+	int index4, index6;
+	bool keep;
 
-	if (!service)
+	if (!service || connman_service_get_type(service) ==
+						CONNMAN_SERVICE_TYPE_VPN)
 		return;
 
 	switch (state) {
@@ -1106,42 +1177,71 @@ static void provider_service_changed(struct connman_service *service,
 	case CONNMAN_SERVICE_STATE_IDLE:
 	case CONNMAN_SERVICE_STATE_ASSOCIATION:
 	case CONNMAN_SERVICE_STATE_CONFIGURATION:
+		return;
 	case CONNMAN_SERVICE_STATE_READY:
 	case CONNMAN_SERVICE_STATE_ONLINE:
+		/* A new transport: move the VPNs kept without one to it */
+		g_hash_table_iter_init(&iter, provider_hash);
+		while (g_hash_table_iter_next(&iter, &key, &value)) {
+			struct connman_provider *provider = value;
+
+			if (!provider->transport_lost_id)
+				continue;
+
+			g_source_remove(provider->transport_lost_id);
+			provider->transport_lost_id = 0;
+			move_vpn_to_transport(provider, service);
+			connman_provider_unref(provider);
+		}
 		return;
 	case CONNMAN_SERVICE_STATE_DISCONNECT:
 	case CONNMAN_SERVICE_STATE_FAILURE:
 		break;
 	}
 
-	/* Try IPv4 first since service may have IP set from two interfaces */
-	ipconfig = __connman_service_get_ip4config(service);
-	service_index = __connman_ipconfig_get_index(ipconfig);
+	index4 = get_service_index(service, AF_INET);
+	index6 = get_service_index(service, AF_INET6);
+	keep = connman_setting_get_bool(CONF_KEEP_VPN_ON_TRANSPORT_CHANGE);
 
-	vpn_index = __connman_connection_get_vpn_index(service_index);
+	/* All the VPNs using this transport, not only the first one */
+	g_hash_table_iter_init(&iter, provider_hash);
+	while (g_hash_table_iter_next(&iter, &key, &value)) {
+		struct connman_provider *provider = value;
+		int phy_index;
 
-	DBG("service %p %s state %d index %d/%d", service,
-		connman_service_get_identifier(service),
-		state, service_index, vpn_index);
+		if (provider->index < 0)
+			continue;
 
-	if (vpn_index < 0) {
-		/* Then try with IPv6 */
-		ipconfig = __connman_service_get_ip6config(service);
-		service_index = __connman_ipconfig_get_index(ipconfig);
+		phy_index = __connman_connection_get_vpn_phy_index(
+							provider->index);
+		if (phy_index < 0 || (phy_index != index4 &&
+						phy_index != index6))
+			continue;
 
-		vpn_index = __connman_connection_get_vpn_index(service_index);
+		list = g_slist_prepend(list, provider);
 	}
 
-	if (vpn_index < 0)
-		return;
+	for (item = list; item; item = item->next) {
+		struct connman_provider *provider = item->data;
 
-	provider = provider_get(vpn_index);
-	if (!provider)
-		return;
+		if (keep) {
+			if (provider->transport_lost_id)
+				continue;
 
-	DBG("disconnect %p index %d", provider, vpn_index);
+			DBG("provider %p transport lost, kept %d s", provider,
+						VPN_TRANSPORT_GRACE_TIMEOUT);
+			connman_provider_ref(provider);
+			provider->transport_lost_id = g_timeout_add_seconds(
+						VPN_TRANSPORT_GRACE_TIMEOUT,
+						transport_lost_timeout, provider);
+		} else {
+			DBG("disconnect %p index %d", provider,
+							provider->index);
+			connman_provider_disconnect(provider);
+		}
+	}
 
-	connman_provider_disconnect(provider);
+	g_slist_free(list);
 }
 
 static const struct connman_notifier provider_notifier = {
