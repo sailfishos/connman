@@ -172,7 +172,8 @@ static struct nameserver_entry *ov_append_dns_entries(const char *key,
 	if (options[0] &&
 		!strcmp(options[0], "dhcp-option") &&
 			options[1] &&
-			!strcmp(options[1], "DNS") &&
+			(!strcmp(options[1], "DNS") ||
+				!strcmp(options[1], "DNS6")) &&
 				options[2]) {
 
 		entry = g_try_new(struct nameserver_entry, 1);
@@ -233,12 +234,38 @@ static void free_ns_entry(gpointer data)
 	g_free(entry);
 }
 
+#define OV_IPV6_NETBITS_KEY "route_ipv6_netbits_"
+#define OV_IPV6_ROUTE_IDX_OFFSET 0x10000
+
+/*
+ * OpenVPN gives IPv6 routes as route_ipv6_network_N=<address>/<prefix>,
+ * split it into the address and a prefix length (netbits) entry.
+ */
+static void ov_append_ipv6_network_route(struct vpn_provider *provider,
+					const char *key, const char *value)
+{
+	const char *idx = key + strlen("route_ipv6_network_");
+	gchar **parts = g_strsplit(value, "/", 2);
+	char *netbits_key;
+
+	vpn_provider_append_route(provider, key, parts[0]);
+
+	netbits_key = g_strconcat(OV_IPV6_NETBITS_KEY, idx, NULL);
+	vpn_provider_append_route(provider, netbits_key,
+					parts[1] ? parts[1] : "128");
+
+	g_free(netbits_key);
+	g_strfreev(parts);
+}
+
 static int ov_notify(DBusMessage *msg, struct vpn_provider *provider)
 {
 	DBusMessageIter iter, dict;
 	const char *reason, *context, *key, *value;
 	char *address = NULL, *gateway = NULL, *peer = NULL, *netmask = NULL;
 	char *untrusted_gateway = NULL;
+	char *address6 = NULL, *gateway6 = NULL;
+	unsigned char prefix_len6 = 0;
 	struct connman_ipaddress *ipaddress;
 	GSList *nameserver_list = NULL;
 	struct ov_private_data *data = vpn_provider_get_plugin_data(provider);
@@ -319,7 +346,18 @@ static int ov_notify(DBusMessage *msg, struct vpn_provider *provider)
 		if (!strcmp(key, "ifconfig_remote"))
 			peer = g_strdup(value);
 
-		if (g_str_has_prefix(key, "route_"))
+		if (!strcmp(key, "ifconfig_ipv6_local"))
+			address6 = g_strdup(value);
+
+		if (!strcmp(key, "ifconfig_ipv6_netbits"))
+			prefix_len6 = (unsigned char)atoi(value);
+
+		if (!strcmp(key, "ifconfig_ipv6_remote"))
+			gateway6 = g_strdup(value);
+
+		if (g_str_has_prefix(key, "route_ipv6_network_"))
+			ov_append_ipv6_network_route(provider, key, value);
+		else if (g_str_has_prefix(key, "route_"))
 			vpn_provider_append_route(provider, key, value);
 
 		if ((ns_entry = ov_append_dns_entries(key, value)))
@@ -393,11 +431,26 @@ static int ov_notify(DBusMessage *msg, struct vpn_provider *provider)
 		g_free(nameservers);
 	}
 
+	if (address6) {
+		struct connman_ipaddress *ipaddress6;
+
+		ipaddress6 = connman_ipaddress_alloc(AF_INET6);
+		if (ipaddress6) {
+			connman_ipaddress_set_ipv6(ipaddress6, address6,
+					prefix_len6 ? prefix_len6 : 64,
+					gateway6);
+			vpn_provider_set_ipaddress(provider, ipaddress6);
+			connman_ipaddress_free(ipaddress6);
+		}
+	}
+
 	g_free(address);
 	g_free(gateway);
 	g_free(untrusted_gateway);
 	g_free(peer);
 	g_free(netmask);
+	g_free(address6);
+	g_free(gateway6);
 	connman_ipaddress_free(ipaddress);
 
 	ov_connect_done(data, 0);
@@ -1341,6 +1394,8 @@ static int ov_route_env_parse(struct vpn_provider *provider, const char *key,
 	char *end;
 	const char *start;
 
+	*family = AF_INET;
+
 	if (g_str_has_prefix(key, "route_network_")) {
 		start = key + strlen("route_network_");
 		*type = VPN_PROVIDER_ROUTE_TYPE_ADDR;
@@ -1350,11 +1405,26 @@ static int ov_route_env_parse(struct vpn_provider *provider, const char *key,
 	} else if (g_str_has_prefix(key, "route_gateway_")) {
 		start = key + strlen("route_gateway_");
 		*type = VPN_PROVIDER_ROUTE_TYPE_GW;
+	} else if (g_str_has_prefix(key, "route_ipv6_network_")) {
+		start = key + strlen("route_ipv6_network_");
+		*type = VPN_PROVIDER_ROUTE_TYPE_ADDR;
+		*family = AF_INET6;
+	} else if (g_str_has_prefix(key, OV_IPV6_NETBITS_KEY)) {
+		start = key + strlen(OV_IPV6_NETBITS_KEY);
+		*type = VPN_PROVIDER_ROUTE_TYPE_MASK;
+		*family = AF_INET6;
+	} else if (g_str_has_prefix(key, "route_ipv6_gateway_")) {
+		start = key + strlen("route_ipv6_gateway_");
+		*type = VPN_PROVIDER_ROUTE_TYPE_GW;
+		*family = AF_INET6;
 	} else
 		return -EINVAL;
 
-	*family = AF_INET;
 	*idx = g_ascii_strtoull(start, &end, 10);
+
+	/* IPv4 and IPv6 routes are numbered separately, keep them apart */
+	if (*family == AF_INET6)
+		*idx += OV_IPV6_ROUTE_IDX_OFFSET;
 
 	return 0;
 }
