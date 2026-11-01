@@ -1823,11 +1823,11 @@ static int oc_route_env_parse(struct vpn_provider *provider, const char *key,
 
 	*idx = g_ascii_strtoull(start, &end, 10);
 
-	if (strncmp(end, "_ADDR", 5) == 0)
+	if (strcmp(end, "_ADDR") == 0)
 		*type = VPN_PROVIDER_ROUTE_TYPE_ADDR;
-	else if (strncmp(end, "_MASK", 5) == 0)
+	else if (strcmp(end, "_MASKLEN") == 0 && *family == AF_INET6)
 		*type = VPN_PROVIDER_ROUTE_TYPE_MASK;
-	else if (strncmp(end, "_MASKLEN", 8) == 0 && *family == AF_INET6)
+	else if (strcmp(end, "_MASK") == 0 && *family == AF_INET)
 		*type = VPN_PROVIDER_ROUTE_TYPE_MASK;
 	else
 		return -EINVAL;
