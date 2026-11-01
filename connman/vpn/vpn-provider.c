@@ -3505,7 +3505,12 @@ int vpn_provider_append_route(struct vpn_provider *provider,
 		break;
 	}
 
-	if (route->netmask && route->gateway && route->network)
+	/*
+	 * Gateway is optional: split routes of e.g. openconnect
+	 * (CISCO_SPLIT_INC_*) have only address and netmask and must still
+	 * be signaled as ServerRoutes, otherwise connmand never adds them.
+	 */
+	if (route->netmask && route->network)
 		provider_schedule_changed(provider);
 
 	return 0;
