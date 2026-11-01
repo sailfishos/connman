@@ -893,7 +893,9 @@ static gboolean process_auth_form(void *user_data)
 			if (user)
 				opt->_value = strdup(user);
 		} else if (opt->type == OC_FORM_OPT_PASSWORD &&
-				g_str_has_prefix(opt->name, "password")) {
+				(g_str_has_prefix(opt->name, "password") ||
+				!g_strcmp0(opt->name, "passwd"))) {
+			/* GlobalProtect names the password field "passwd" */
 
 			const char *pass = vpn_provider_get_string(
 						data->provider,
