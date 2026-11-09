@@ -85,6 +85,7 @@ int vpn_provider_set_string(struct vpn_provider *provider,
 					const char *key, const char *value);
 int vpn_provider_set_string_hide_value(struct vpn_provider *provider,
 					const char *key, const char *value);
+int vpn_provider_save_settings(struct vpn_provider *provider);
 const char *vpn_provider_get_string(struct vpn_provider *provider,
 							const char *key);
 bool vpn_provider_get_string_immutable(struct vpn_provider *provider,

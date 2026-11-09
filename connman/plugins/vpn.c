@@ -26,6 +26,7 @@
 #endif
 
 #include <string.h>
+#include <arpa/inet.h>
 #include <errno.h>
 #include <sys/socket.h>
 #include <stdlib.h>
@@ -1555,6 +1556,42 @@ static bool check_host(char **hosts, char *host)
 	return false;
 }
 
+/*
+ * IPv6 netmask is normally a prefix length, but the network route of a
+ * split routed VPN gets it in address form (ffff:ffff::) from
+ * connman_inet_ipv6_get_route_addresses(): atoi() made it 0, i.e. a
+ * default route.
+ */
+static unsigned char ipv6_prefix_len(const char *netmask)
+{
+	struct in6_addr mask;
+	unsigned char len = 0;
+	int i;
+
+	if (!netmask)
+		return 128;
+
+	if (!strchr(netmask, ':'))
+		return (unsigned char)atoi(netmask);
+
+	if (inet_pton(AF_INET6, netmask, &mask) != 1)
+		return 128;
+
+	for (i = 0; i < 16 && mask.s6_addr[i] == 0xff; i++)
+		len += 8;
+
+	if (i < 16) {
+		unsigned char byte = mask.s6_addr[i];
+
+		while (byte & 0x80) {
+			len++;
+			byte <<= 1;
+		}
+	}
+
+	return len;
+}
+
 static void set_route(struct connection_data *data, struct vpn_route *route)
 {
 	int err;
@@ -1582,7 +1619,7 @@ static void set_route(struct connection_data *data, struct vpn_route *route)
 		return;
 
 	if (route->family == AF_INET6) {
-		unsigned char prefix_len = atoi(route->netmask);
+		unsigned char prefix_len = ipv6_prefix_len(route->netmask);
 
 		err = connman_inet_add_ipv6_network_route(data->index,
 							route->network,
@@ -2269,6 +2306,12 @@ static gboolean property_changed(DBusConnection *conn,
 		dbus_message_iter_get_basic(&value, &value_bool);
 		connman_provider_set_ipv6_data_leak_prevention(data->provider,
 								value_bool);
+	} else if (g_str_has_prefix(key, "VPN.LocalNetworks") &&
+				dbus_message_iter_get_arg_type(&value) ==
+							DBUS_TYPE_STRING) {
+		dbus_message_iter_get_basic(&value, &str);
+		g_hash_table_replace(data->setting_strings, g_strdup(key),
+							g_strdup(str));
 	} else if (g_str_equal(key, "AuthErrorLimit")) {
 		data->auth_error_limit = get_dbus_uint32(&value);
 	} else if (g_str_equal(key, "AuthErrors")) {

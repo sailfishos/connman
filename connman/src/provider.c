@@ -473,6 +473,15 @@ static int set_connected(struct connman_provider *provider,
 		}
 
 		if (ipconfig_ipv6) {
+			/*
+			 * The VPN interface may have IPv6 disabled, e.g. when
+			 * it was created for an IPv4 only connection. Enable
+			 * it, otherwise the IPv6 address cannot be added.
+			 */
+			if (__connman_ipconfig_enable_ipv6(ipconfig_ipv6))
+				connman_warn("cannot enable IPv6 on provider %p",
+								provider);
+
 			__connman_ipconfig_address_add(ipconfig_ipv6);
 			__connman_ipconfig_gateway_add(ipconfig_ipv6);
 		}
