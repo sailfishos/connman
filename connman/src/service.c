@@ -5392,9 +5392,13 @@ static DBusMessage *set_property(DBusConnection *conn,
 
 			/* Disable autoconnect for all other VPN providers
 			 * if autoconnect is set true. Only one VPN can have
-			 * autoconnect enabled.
+			 * autoconnect enabled, unless SingleAutoConnectVPN is
+			 * set false to allow e.g. split routed VPNs to be
+			 * connected at the same time.
 			 */
-			disable_autoconnect_for_services(service,
+			if (connman_setting_get_bool(
+						CONF_SINGLE_AUTOCONNECT_VPN))
+				disable_autoconnect_for_services(service,
 							service->type);
 		}
 

@@ -203,6 +203,9 @@ static bool is_addr_unspec(int family, struct sockaddr *addr)
 	struct sockaddr_in *in4;
 	struct sockaddr_in6 *in6;
 
+	if (!addr)
+		return true;
+
 	switch (family) {
 	case AF_INET:
 		in4 = (struct sockaddr_in*) addr;
@@ -1236,7 +1239,7 @@ static int get_interface_addresses(struct interface_address *if_addr)
 			addrs[ADDR_TYPE_IPADDR] = ifa->ifa_addr;
 		}
 
-		if (if_addr->ipaddrs[ADDR_TYPE_NETMASK]) {
+		if (if_addr->ipaddrs[ADDR_TYPE_NETMASK] && ifa->ifa_netmask) {
 			if (!if_addr->allow_unspec && is_addr_unspec(
 						if_addr->family,
 						ifa->ifa_netmask))
@@ -1246,7 +1249,8 @@ static int get_interface_addresses(struct interface_address *if_addr)
 		}
 
 		if (if_addr->ipaddrs[ADDR_TYPE_BRDADDR] &&
-					(ifa->ifa_flags & IFF_BROADCAST)) {
+					(ifa->ifa_flags & IFF_BROADCAST) &&
+					ifa->ifa_ifu.ifu_broadaddr) {
 			if (!if_addr->allow_unspec && is_addr_unspec(
 						if_addr->family,
 						ifa->ifa_ifu.ifu_broadaddr))
@@ -1255,8 +1259,14 @@ static int get_interface_addresses(struct interface_address *if_addr)
 			addrs[ADDR_TYPE_BRDADDR] = ifa->ifa_ifu.ifu_broadaddr;
 		}
 
+		/*
+		 * A point-to-point link may have no peer address, e.g. an
+		 * IPv6 address set on a tun device without a peer: the
+		 * kernel then gives no destination address.
+		 */
 		if (if_addr->ipaddrs[ADDR_TYPE_DSTADDR] &&
-					(ifa->ifa_flags & IFF_POINTOPOINT)) {
+					(ifa->ifa_flags & IFF_POINTOPOINT) &&
+					ifa->ifa_ifu.ifu_dstaddr) {
 			if (!if_addr->allow_unspec && is_addr_unspec(
 						if_addr->family,
 						ifa->ifa_ifu.ifu_dstaddr))

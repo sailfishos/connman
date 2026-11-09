@@ -1312,6 +1312,13 @@ static int provider_load_from_keyfile(struct vpn_provider *provider,
 						provider->identifier,key,
 						&num_user_networks, NULL);
 			provider->user_networks = get_routes(networks);
+		} else if (g_str_equal(key, "SplitRouting")) {
+			value_bool = __vpn_config_get_boolean(keyfile,
+						provider->identifier, key,
+						NULL, false);
+
+			vpn_provider_set_boolean(provider, "SplitRouting",
+						value_bool, false);
 		} else if (g_str_equal(key, "DefaultRoute")) {
 			/*
 			 * DefaultRoute is a legacy setting. This will not be
@@ -1422,12 +1429,10 @@ static void reset_error_counters(struct vpn_provider *provider)
 	vpn_provider_set_uint(provider, "ConnErrors", 0);
 }
 
+static int provider_write_settings(struct vpn_provider *provider);
+
 static int vpn_provider_save(struct vpn_provider *provider)
 {
-	GKeyFile *keyfile;
-	const char *value;
-	int err;
-
 	DBG("provider %p immutable %s", provider,
 					provider->immutable ? "yes" : "no");
 
@@ -1435,6 +1440,27 @@ static int vpn_provider_save(struct vpn_provider *provider)
 
 	if (provider->state == VPN_PROVIDER_STATE_FAILURE)
 		vpn_provider_set_state(provider, VPN_PROVIDER_STATE_IDLE);
+
+	return provider_write_settings(provider);
+}
+
+/*
+ * Write the provider settings without touching the state or the error
+ * counters, for plugins storing a value while connecting.
+ */
+int vpn_provider_save_settings(struct vpn_provider *provider)
+{
+	if (!provider)
+		return -EINVAL;
+
+	return provider_write_settings(provider);
+}
+
+static int provider_write_settings(struct vpn_provider *provider)
+{
+	GKeyFile *keyfile;
+	const char *value;
+	int err;
 
 	if (provider->immutable) {
 		/*
@@ -1461,6 +1487,9 @@ static int vpn_provider_save(struct vpn_provider *provider)
 	if (value)
 		g_key_file_set_string(keyfile, provider->identifier,
 						"AuthErrorLimit", value);
+
+	g_key_file_set_boolean(keyfile, provider->identifier,
+				"SplitRouting", provider->do_split_routing);
 
 	if (provider->user_networks) {
 		gchar **networks;
