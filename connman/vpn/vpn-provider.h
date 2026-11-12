@@ -110,6 +110,8 @@ int vpn_provider_set_state(struct vpn_provider *provider,
 
 void vpn_provider_add_error(struct vpn_provider *provider,
 					enum vpn_provider_error error);
+void vpn_provider_clear_error(struct vpn_provider *provider,
+					enum vpn_provider_error error, bool update_time);
 int vpn_provider_indicate_error(struct vpn_provider *provider,
 					enum vpn_provider_error error);
 
@@ -122,6 +124,8 @@ void vpn_provider_set_plugin_data(struct vpn_provider *provider, void *data);
 void *vpn_provider_get_plugin_data(struct vpn_provider *provider);
 int vpn_provider_set_ipaddress(struct vpn_provider *provider,
 					struct connman_ipaddress *ipaddress);
+int vpn_provider_update_gateway(struct vpn_provider *provider,
+							const char *gateway);
 int vpn_provider_set_pac(struct vpn_provider *provider,
 				const char *pac);
 int vpn_provider_set_domain(struct vpn_provider *provider,
