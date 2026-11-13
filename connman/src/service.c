@@ -7335,10 +7335,26 @@ static void stats_destroy(struct connman_service *service)
 		g_timer_destroy(service->stats_timer);
 }
 
+/* Unpublish the registry path when the service is removed. Async users may
+ * retain the old service while a new network reuses its identifier. Clearing
+ * the path prevents the old finalizer from unregistering the replacement.
+ */
+static void service_unregister(struct connman_service *service)
+{
+	char *path = service->path;
+
+	if (path) {
+		service->path = NULL;
+		__connman_connection_update_gateway();
+		g_dbus_unregister_interface(connection, path,
+						CONNMAN_SERVICE_INTERFACE);
+		g_free(path);
+	}
+}
+
 static void service_free(gpointer user_data)
 {
 	struct connman_service *service = user_data;
-	char *path = service->path;
 
 	DBG("service %p", service);
 
@@ -7360,15 +7376,7 @@ static void service_free(gpointer user_data)
 
 	__connman_wispr_stop(service);
 
-	service->path = NULL;
-
-	if (path) {
-		__connman_connection_update_gateway();
-
-		g_dbus_unregister_interface(connection, path,
-						CONNMAN_SERVICE_INTERFACE);
-		g_free(path);
-	}
+	service_unregister(service);
 
 	g_hash_table_destroy(service->counter_table);
 
@@ -9652,6 +9660,7 @@ static void service_removed(void *data)
 	struct connman_service *service = data;
 
 	service_schedule_removed(service);
+	service_unregister(service);
 	connman_service_unref(service);
 }
 
