@@ -124,7 +124,8 @@ static void request_input_append_user_info(DBusMessageIter *iter,
 
 	if (data->username_str) {
 		str = vpn_provider_get_string(provider, data->username_str);
-		if (str)
+		/* "-" means cleared */
+		if (str && *str && g_strcmp0(str, "-"))
 			connman_dbus_dict_append_basic(iter, "Value",
 						DBUS_TYPE_STRING, &str);
 	}

@@ -474,8 +474,8 @@ static bool strv_contains_prefix(const char *strv[], const char *str)
 static void clear_provider_credentials(struct vpn_provider *provider,
 						bool clear_pkcs_pass)
 {
+	/* The username is kept: it is offered again on the next login */
 	const char *keys[] = { "OpenConnect.PKCSPassword",
-				"OpenConnect.Username",
 				"OpenConnect.Password",
 				"OpenConnect.SecondPassword",
 				"OpenConnect.Cookie",
@@ -1456,7 +1456,6 @@ static int request_input_credentials_full(
 	const char *path;
 	const char *agent_sender;
 	const char *agent_path;
-	const char *username;
 	DBusMessageIter iter;
 	DBusMessageIter dict;
 	int err;
@@ -1528,9 +1527,9 @@ static int request_input_credentials_full(
 	case OC_CONNECT_COOKIE_WITH_USERPASS:
 		/* fallthrough */
 	case OC_CONNECT_USERPASS:
-		username = vpn_provider_get_string(data->provider,
+		/* The key of the username, not its value */
+		vpn_agent_append_user_info(&dict, data->provider,
 					"OpenConnect.Username");
-		vpn_agent_append_user_info(&dict, data->provider, username);
 
 		use_second_password = vpn_provider_get_boolean(data->provider,
 					"OpenConnect.UseSecondPassword",
