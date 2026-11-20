@@ -95,6 +95,8 @@ static const char *connect_types[] = {"cookie", "cookie_with_userpass",
 			"userpass", "publickey", "pkcs", NULL};
 static const char *protocols[] = { "anyconnect", "nc", "gp", NULL};
 
+#define OC_MAX_USERPASS_FORMS 3
+
 struct oc_private_data {
 	struct vpn_provider *provider;
 	struct connman_task *task;
@@ -114,6 +116,7 @@ struct oc_private_data {
 	enum oc_connect_type connect_type;
 	bool tried_passphrase;
 	bool group_set;
+	int userpass_forms;
 };
 
 typedef void (*request_input_reply_cb_t) (DBusMessage *reply,
@@ -282,6 +285,15 @@ static int oc_notify(DBusMessage *msg, struct vpn_provider *provider)
 		oc_connect_done(data, ENOENT);
 		return VPN_STATE_FAILURE;
 	}
+
+	/*
+	 * openconnect keeps the tunnel up while it reconnects (e.g. after the
+	 * device has been suspended) and reports it with these two reasons.
+	 * They must not be treated as a disconnect.
+	 */
+	if (!strcmp(reason, "attempt-reconnect") ||
+				!strcmp(reason, "reconnect"))
+		return VPN_STATE_UNKNOWN;
 
 	if (strcmp(reason, "connect"))
 		return VPN_STATE_DISCONNECT;
@@ -462,8 +474,8 @@ static bool strv_contains_prefix(const char *strv[], const char *str)
 static void clear_provider_credentials(struct vpn_provider *provider,
 						bool clear_pkcs_pass)
 {
+	/* The username is kept: it is offered again on the next login */
 	const char *keys[] = { "OpenConnect.PKCSPassword",
-				"OpenConnect.Username",
 				"OpenConnect.Password",
 				"OpenConnect.SecondPassword",
 				"OpenConnect.Cookie",
@@ -815,6 +827,22 @@ static gboolean process_auth_form(void *user_data)
 	switch (data->connect_type) {
 	case OC_CONNECT_USERPASS:
 	case OC_CONNECT_COOKIE_WITH_USERPASS:
+		/*
+		 * The same stored credentials are submitted every time the
+		 * server sends the form again. Stop after a few rounds so that
+		 * rejected credentials do not hammer the server (and lock the
+		 * account) in a tight loop.
+		 */
+		if (++data->userpass_forms > OC_MAX_USERPASS_FORMS) {
+			connman_warn("Credentials rejected %d times, giving up",
+						OC_MAX_USERPASS_FORMS);
+			vpn_provider_add_error(data->provider,
+					VPN_PROVIDER_ERROR_AUTH_FAILED);
+			clear_provider_credentials(data->provider, true);
+			data->err = -EACCES;
+			form_data->status = OC_FORM_RESULT_ERR;
+			goto out;
+		}
 		break;
 
 	case OC_CONNECT_PKCS:
@@ -884,7 +912,9 @@ static gboolean process_auth_form(void *user_data)
 			if (user)
 				opt->_value = strdup(user);
 		} else if (opt->type == OC_FORM_OPT_PASSWORD &&
-				g_str_has_prefix(opt->name, "password")) {
+				(g_str_has_prefix(opt->name, "password") ||
+				!g_strcmp0(opt->name, "passwd"))) {
+			/* GlobalProtect names the password field "passwd" */
 
 			const char *pass = vpn_provider_get_string(
 						data->provider,
@@ -980,6 +1010,7 @@ static int authenticate(struct oc_private_data *data)
 	const char *cert = NULL;
 	const char *key = NULL;
 	const char *urlpath;
+	const char *protocol;
 	const char *vpnhost;
 	bool disable_ipv6;
 
@@ -1012,6 +1043,13 @@ static int authenticate(struct oc_private_data *data)
 			oc_process_auth_form,
 			oc_progress,
 			data);
+
+	/* Same as openconnect's --protocol, needed before obtaining the cookie */
+	protocol = vpn_provider_get_string(data->provider,
+						"OpenConnect.Protocol");
+	if (protocol && *protocol &&
+			openconnect_set_protocol(data->vpninfo, protocol))
+		connman_warn("Unsupported OpenConnect protocol %s", protocol);
 
 	/* Replicating how openconnect's --usergroup argument works */
 	urlpath = vpn_provider_get_string(data->provider,
@@ -1418,7 +1456,6 @@ static int request_input_credentials_full(
 	const char *path;
 	const char *agent_sender;
 	const char *agent_path;
-	const char *username;
 	DBusMessageIter iter;
 	DBusMessageIter dict;
 	int err;
@@ -1490,9 +1527,9 @@ static int request_input_credentials_full(
 	case OC_CONNECT_COOKIE_WITH_USERPASS:
 		/* fallthrough */
 	case OC_CONNECT_USERPASS:
-		username = vpn_provider_get_string(data->provider,
+		/* The key of the username, not its value */
+		vpn_agent_append_user_info(&dict, data->provider,
 					"OpenConnect.Username");
-		vpn_agent_append_user_info(&dict, data->provider, username);
 
 		use_second_password = vpn_provider_get_boolean(data->provider,
 					"OpenConnect.UseSecondPassword",
@@ -1785,11 +1822,11 @@ static int oc_route_env_parse(struct vpn_provider *provider, const char *key,
 
 	*idx = g_ascii_strtoull(start, &end, 10);
 
-	if (strncmp(end, "_ADDR", 5) == 0)
+	if (strcmp(end, "_ADDR") == 0)
 		*type = VPN_PROVIDER_ROUTE_TYPE_ADDR;
-	else if (strncmp(end, "_MASK", 5) == 0)
+	else if (strcmp(end, "_MASKLEN") == 0 && *family == AF_INET6)
 		*type = VPN_PROVIDER_ROUTE_TYPE_MASK;
-	else if (strncmp(end, "_MASKLEN", 8) == 0 && *family == AF_INET6)
+	else if (strcmp(end, "_MASK") == 0 && *family == AF_INET)
 		*type = VPN_PROVIDER_ROUTE_TYPE_MASK;
 	else
 		return -EINVAL;
