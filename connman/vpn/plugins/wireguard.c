@@ -200,19 +200,45 @@ static int parse_allowed_ips(const char *allowed_ips, wg_peer *peer,
 	return 0;
 }
 
+static bool is_family_supported(int family)
+{
+	switch (vpn_provider_get_ip_support()) {
+	case VPN_PROVIDER_IP_SUPPORT_TYPE_UNKNOWN:
+		return false;
+	case VPN_PROVIDER_IP_SUPPORT_TYPE_IPV4:
+		return family == AF_INET;
+	case VPN_PROVIDER_IP_SUPPORT_TYPE_IPV6:
+		return family == AF_INET6;
+	case VPN_PROVIDER_IP_SUPPORT_TYPE_ALL:
+		return family == AF_INET || family == AF_INET6;
+	default:
+		break;
+	}
+
+	return false;
+}
+
 static int get_endpoint_addr(const char *host, const char *port, int flags,
 							struct sockaddr_u *addr)
 {
 	struct addrinfo hints;
 	struct addrinfo *result = NULL, *rp;
+	int unsupported_family_count = 0;
 	int sk;
 	int err;
 
 	memset(&hints, 0, sizeof(struct addrinfo));
-	hints.ai_family = AF_UNSPEC;
 	hints.ai_socktype = SOCK_DGRAM;
 	hints.ai_flags = flags;
 	hints.ai_protocol = 0;
+	hints.ai_family = AF_UNSPEC;
+
+	if (vpn_provider_get_ip_support() ==
+					VPN_PROVIDER_IP_SUPPORT_TYPE_UNKNOWN) {
+		connman_warn("wireguard: default service is not connected,"
+					"cannot resolve host address %s", host);
+		return -ENOLINK;
+	}
 
 	err = getaddrinfo(host, port, &hints, &result);
 	if (err) { /* Any non-zero return from getaddrinfo is an error */
@@ -225,13 +251,23 @@ static int get_endpoint_addr(const char *host, const char *port, int flags,
 	}
 
 	for (rp = result; rp; rp = rp->ai_next) {
+		if (!is_family_supported(rp->ai_family)) {
+			DBG("Unsupported IP family type %d", rp->ai_family);
+			unsupported_family_count++;
+			continue;
+		}
+
 		sk = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
 		if (sk < 0)
 			continue;
 		if (connect(sk, rp->ai_addr, rp->ai_addrlen) != -1) {
 			/* success */
 			close(sk);
+			err = 0;
 			break;
+		} else {
+			/* Record err to separate from unsupported IP family. */
+			err = -errno;
 		}
 
 		close(sk);
@@ -241,6 +277,11 @@ static int get_endpoint_addr(const char *host, const char *port, int flags,
 		DBG("no connectable address found in results: %s",
 							strerror(errno));
 		freeaddrinfo(result);
+
+		/* No address found but unsupported were detected. */
+		if (!err && unsupported_family_count)
+			return -EAFNOSUPPORT;
+
 		return -EHOSTUNREACH;
 	}
 
@@ -271,6 +312,34 @@ static const char *endpoint_to_str(struct wg_peer *peer, char *buf,
 	return NULL;
 }
 
+static bool is_addr_supported(const char *addr)
+{
+	int type;
+
+	if (!addr)
+		return false;
+
+	type = connman_inet_check_ipaddress(addr);
+	if (type <= 0) {
+		DBG("address is a hostname: %s", addr);
+		return true;
+	}
+
+	switch (vpn_provider_get_ip_support()) {
+	case VPN_PROVIDER_IP_SUPPORT_TYPE_UNKNOWN:
+		DBG("ConnMan is not connected - should not happen");
+		return false;
+	case VPN_PROVIDER_IP_SUPPORT_TYPE_IPV4:
+		return type == AF_INET;
+	case VPN_PROVIDER_IP_SUPPORT_TYPE_IPV6:
+		return type == AF_INET6;
+	case VPN_PROVIDER_IP_SUPPORT_TYPE_ALL:
+		return type == AF_INET || type == AF_INET6;
+	}
+
+	return false;
+}
+
 static int parse_endpoint_hostname(const char *host, const char *port,
 							struct wg_peer *peer,
 							char **gateway_resolved)
@@ -293,6 +362,12 @@ static int parse_endpoint_hostname(const char *host, const char *port,
 		DBG("Failure tokenizing host %s", host);
 		g_strfreev(tokens);
 		return -EINVAL;
+	}
+
+	if (!is_addr_supported(tokens[0])) {
+		DBG("Cannot use host %s, address is not supported", tokens[0]);
+		g_strfreev(tokens);
+		return -EAFNOSUPPORT;
 	}
 
 	DBG("using host %s", tokens[0]);
@@ -320,7 +395,7 @@ static int parse_endpoint_hostname(const char *host, const char *port,
 static int parse_endpoint_results(char **results, const char *port,
 							struct sockaddr_u *addr)
 {
-	int err = 0;
+	int err = -EINVAL;
 	int i;
 
 	if (!results) {
@@ -329,6 +404,11 @@ static int parse_endpoint_results(char **results, const char *port,
 	}
 
 	for (i = 0; results[i]; i++) {
+		if (!is_addr_supported(results[i])) {
+			DBG("ignore host %s, not supported", results[i]);
+			continue;
+		}
+
 		DBG("using host %s", results[i]);
 
 		/* Use getaddrinfo to fill in the structs after resolve */
@@ -898,7 +978,7 @@ static int wg_connect(struct vpn_provider *provider,
 	ifname = get_ifname();
 	if (!ifname) {
 		DBG("Failed to find an usable device name");
-		err = -ENOENT;
+		err = -ENODEV;
 		goto done;
 	}
 	stpncpy(info->device.name, ifname, sizeof(info->device.name) - 1);
@@ -906,7 +986,7 @@ static int wg_connect(struct vpn_provider *provider,
 
 	err = wg_add_device(info->device.name);
 	if (err) {
-		DBG("Failed to creating WireGuard device %s", info->device.name);
+		DBG("Failed to create WireGuard device %s", info->device.name);
 		goto done;
 	}
 
@@ -914,6 +994,7 @@ static int wg_connect(struct vpn_provider *provider,
 	if (err) {
 		DBG("Failed to configure WireGuard device %s", info->device.name);
 		wg_del_device(info->device.name);
+		goto done;
 	}
 
 	vpn_set_ifname(provider, info->device.name);
@@ -936,10 +1017,10 @@ static int wg_connect(struct vpn_provider *provider,
 
 	vpn_provider_set_supported_ip_networks(provider, true, !disable_ipv6);
 
-done:
 	if (cb)
 		cb(provider, user_data, -err);
 
+done:
 	connman_ipaddress_free(ipaddresses.ipaddress_ipv4);
 	connman_ipaddress_free(ipaddresses.ipaddress_ipv6);
 
@@ -952,6 +1033,10 @@ done:
 		}
 
 		run_route_setup(info, ROUTE_SETUP_TIMEOUT);
+	} else {
+		vpn_provider_set_plugin_data(provider, NULL);
+		if (info)
+			free_private_data(info);
 	}
 
 	return err;
@@ -962,13 +1047,22 @@ error:
 	 * looping when parameters are incorrect and VPN stays in failed
 	 * state.
 	 */
-	if (err == -EHOSTUNREACH) {
+	switch (err) {
+	case -EHOSTUNREACH:
 		vpn_provider_add_error(provider,
 					VPN_PROVIDER_ERROR_CONNECT_FAILED);
-	} else {
+		break;
+	case -ENOLINK:
+		/* Not an error, caused by no IP support on transport. */
+		break;
+	case -EAFNOSUPPORT:
+		DBG("Endpoint IP family is not supported");
+		break;
+	default:
 		vpn_provider_add_error(provider,
 					VPN_PROVIDER_ERROR_LOGIN_FAILED);
 		err = -ECONNABORTED;
+		break;
 	}
 
 	goto done;
