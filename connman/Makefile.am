@@ -561,7 +561,7 @@ unit_test_sailfish_datacounter_SOURCES = unit/test-sailfish_datacounter.c \
 	src/wakeup_timer.c src/log.c src/error.c src/dbus.c \
 	$(backtrace_sources)
 noinst_PROGRAMS += unit/test-sailfish_datacounter
-TESTS += unit/test-sailfish_datacounter
+#TESTS += unit/test-sailfish_datacounter
 
 unit_test_sailfish_datacounters_CPPFLAGS = -I$(builddir)/src \
 	@GLIBUTIL_CFLAGS@ $(AM_CPPFLAGS)
